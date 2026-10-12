@@ -1,0 +1,217 @@
+========================================================================
+              Song Event Data Transfer Protocol
+========================================================================
+
+NOTE: the sys/ex dump format for this undergoing a redesign. Song event
+dumps are currently disabled.
+
+The data to be sent must be broken up into packets by the client.
+Each packet must be the same size(24000bytes(*1)), except the last packet.
+
+Song Event Packet Format:
+
+  F0 42 3g 68 73 09 <packet index> <song number> 00 <event data> F7
+
+  <packet index>
+        0..99:  0..99
+  <song number>
+        pp pp: (14-bit, MSB first) 0..199
+  <event data>
+        dd dd dd... max:27432bytes
+
+NOTES:
+(*1)24000 = 8 * 3000 (size of event * number of events)
+(*2)Store bank request message must be sent after sending the song data.
+
+  F0 42 3g 68 76 02 00 F7
+
+
+For instance, if you send the song000 data that has 24014 bytes of event data to OASYS, 
+please send them as follows.
+
+  F0 42 3g 68 73 02 00 00 00 02 <Song Timbre Set(same as combi)> F7
+  F0 42 3g 68 73 08 00 00 00 00 <Song Control> F7
+  F0 42 3g 68 73 09 00 00 00 01 <27432 bytes of event data> F7
+  F0 42 3g 68 73 09 01 00 00 01 <16 bytes of event data> F7
+  F0 42 3g 68 76 02 00 F7
+
+
+                              EVENT DATA FORMAT IN SONG
+
+ *  Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |kkkkkkkk|........|........|........|........|........|........|........|
+
+    k: kind(8bit)
+
+    master track event
+    kind =
+    0x01: Bar
+    0x03: TrkEnd
+    0x0b: TempoChg
+
+    track event
+    kind =
+    0x01: Bar
+    0x02: Pat
+    0x03: TrkEnd
+    0x09: Note
+    0x0a: PolyPress
+    0x0b: ControlChg
+    0x0c: ProgramChg
+    0x0d: ChPress
+    0x0e: PitchBend
+
+    0x0f: Excl
+    0x07: ExclData
+    0x08: ExclEnd
+
+    pattern event
+    kind =
+    0x01: Bar
+    0x03: TrkEnd
+    0x09: Note
+    0x0a: PolyPress
+    0x0b: ControlChg
+    0x0c: ProgramChg
+    0x0d: ChPress
+    0x0e: PitchBend
+
+ *  Bar Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00000001|........|........|MMMMMMMM|ssssssss|ssssssss|mmmmmmmm|mmmmmmmm|
+
+    m: meas
+    s: size
+    M: meter    * only mastertrk, patterntrk
+
+    meter format
+       bit image (M16)  |01 23 4567|
+       bit 0-1 undefined
+       bit 2-3 0:specified 1:/4 2:/8 3:/16
+       bit 4-7 0~15
+
+
+ *  TrkEnd Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00000011|........|........|........|........|........|mmmmmmmm|mmmmmmmm|
+
+    m: meas
+
+
+ *  TempoChg Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001011|.......u|........|NNNNNNNN|VVVVVVVV|VVVVVVVV|tttttttt|tttttttt|
+
+    t: tick
+    N: No.(=0x6b [fixed])
+    u: last tempo unfixed
+    V: tempo val
+
+ *  Pat Event bit image (Instead of BAR)
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00000010|........|........|MMMMMMMM|nnnnnnnn|nnnnnnnn|mmmmmmmm|mmmmmmmm|
+
+    m: trk meas
+    n: pat No.
+    M: pat meas
+
+
+ *  Note Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001001|........|kkkkkkkk|vvvvvvvv|llllllll|llllllll|tttttttt|tttttttt|
+
+    t: tick     (=0xfff :tie from last measure)
+    k: key No.
+    v: vel
+    l: length   (=0xfff :tie to next measure)
+
+
+ *   PolyPress Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001010|........|........|........|vvvvvvvv|kkkkkkkk|tttttttt|tttttttt|
+
+    t: tick
+    k: key No.
+    v: val
+
+
+ *   ControlChg Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001011|.......u|........|vvvvvvvv|VVVVVVVV|nnnnnnnn|tttttttt|tttttttt|
+
+    t: tick
+    n: control No.
+    u: unfixed
+    V: val
+    v: last val
+
+ *   ProgramChg Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001100|.......u|bbbbbbbb|nnnnnnnn|BBBBBBBB|NNNNNNNN|tttttttt|tttttttt|
+
+    t: tick
+    N: prog No.
+    B: bank
+    n: last prog No.
+    u: last prog No. and bank unfixed
+    b: last bank
+
+ *  ChPress Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001101|.......u|........|........|vvvvvvvv|VVVVVVVV|tttttttt|tttttttt|
+
+    t: tick
+    V: val
+    v: last val
+    u: last val unfixed
+
+
+ *   PitchBend Event bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001110|.......u|hhhhhhhh|llllllll|HHHHHHHH|LLLLLLLL|tttttttt|tttttttt|
+
+    t: tick
+    L: val(low)
+    H: val(high)
+    l: last val(low)
+    h: last val(high)
+    u: last val unfixed
+
+
+ *   ExclEvent bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001111|......eu|........|LLLLLLLL|LLLLLLLL|LLLLLLLL|tttttttt|tttttttt|
+
+    t: tick     (=0xfff :invalid message)
+    e: enable parameter change
+    u: last val unfixed
+    L: last Value
+    
+ *   ExclDataEvent bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00000111|dddddddd|dddddddd|dddddddd|dddddddd|dddddddd|dddddddd|dddddddd|
+
+    d: data
+
+ *  EOXEvent bit image
+
+    |M  07  L|M  06  L|M  05  L|M  04  L|M  03  L|M  02  L|M  01  L|M  00  L|
+    |00001000|........|........|........|........|........|........|........|
+
+    d: data
+
+

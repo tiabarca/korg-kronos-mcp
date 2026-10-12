@@ -1,0 +1,1376 @@
+KORG Proprietary System Exclusive Messages For KRONOS                          Version 1.26 (Aug 21, 2014)
+
+1 Function Code
+
+               Function Code (5th byte of exclusive message) List
+      +------+------------------------------------------+----------------+
+      | Func | Description                              |Receive/Transmit|
+      +------+------------------------------------------+----------------+
+      |  72  | Object Dump Request                      |Receive         |
+      |  73  | Object Dump                              |Receive/Transmit|
+      |  76  | Store Bank Request                       |Receive/Transmit|
+      |  77  | Dump Bank Request                        |Receive         |
+      |      |                                          |                |
+      |  74  | Current Object Dump Request              |Receive         |
+      |  75  | Current Object Dump                      |Receive/Transmit|
+      |      |                                          |                |
+      |  37  | Bank Digest Request                      |Receive         |
+      |  38  | Bank Digest                              |Transmit        |
+      |  39  | Bank Digest Collection Request           |Receive         |
+      |  3A  | Bank Digest Collection                   |Transmit        |
+      |      |                                          |                |
+      |  30  | Current Sample Information Request       |Receive         |
+      |  31  | Current Sample Information               |Transmit        |
+      |      |                                          |                |
+      |  32  | Current Performance Id Request           |Receive         |
+      |  33  | Current Performance Id                   |Transmit        |
+      |      |                                          |                |
+      |  34  | Current Piano Types Request              |Receive         |
+      |  35  | Current Piano Types                      |Transmit        |
+      |  36  | Notify Piano Types Changed               |Transmit        |
+      |      |                                          |                |
+      |  79  | SMF Data Dump Request                    |Receive         |
+      |  7A  | SMF Data Dump                            |Transmit        |
+      |      |                                          |                |
+      |  43  | Parameter Change (integer)               |Receive/Transmit|
+      |  44  | Parameter Change (binary)                |Receive/Transmit|
+      |  41  | Sequencer Parameter Change               |Receive/Transmit|
+      |  6D  | KARMA Parameter Change                   |Receive/Transmit|
+      |  6E  | Drum Track Parameter Change              |Receive/Transmit|
+      |      |                                          |                |
+      |  71  | Set Current Object                       |Receive/Transmit|
+      |  53  | Drum Kit Parameter Change (integer)      |Receive/Transmit|
+      |  54  | Drum Kit Parameter Change (binary)       |Receive/Transmit|
+      |  55  | Wave Seq Parameter Change (integer)      |Receive/Transmit|
+      |  56  | Wave Seq Parameter Change (binary)       |Receive/Transmit|
+      |      |                                          |                |
+      |  12  | Mode Request                             |Receive         |
+      |  42  | Mode Data                                |Transmit        |
+      |  48  | Edit In Context Notify                   |Transmit        |
+      |  4E  | Mode Change                              |Receive/Transmit|
+      |      |                                          |                |
+      |  60  | Program Bank Types Request               |Receive         |
+      |  61  | Program Bank Types                       |Transmit        |
+      |      |                                          |                |
+      |  7C  | Change Program Bank Type                 |Receive         |
+      |  7D  | Query Program Bank Type (deprecated)     |Receive         |
+      |  7E  | Query Program Bank Type Reply            |Transmit        |
+      |      | (deprecated)                             |                |
+      |      |                                          |                |
+      |  78  | Reset Controller                         |Receive/Transmit|
+      |      |                                          |                |
+      |  7F  | KARMA Control                            |Receive/Transmit|
+      |      |                                          |                |
+      |  13  | Song Select                              |Receive/Transmit|
+      |      |                                          |                |
+      |  24  | Reply                                    |Transmit        |
+      +------+------------------------------------------+----------------+
+
+
+[72] Object Dump Request                                                  Receive
+        F0, 42, 3g, 68          Excl Header
+        72                      Function
+        obj                     *1
+        bank                    *2
+        idH                     Index (bit7-13)
+        idL                     Index (bit0-6)
+        F7                      End of Excl
+
+ Requests the instrument to send an Object Dump message (function 73).
+ Instrument responds with a Reply message (function 24) for invalid requests.
+
+
+[73] Object Dump                                                          Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        73                      Function
+        obj                     *1
+        bank                    *2
+        idH                     Index (bit7-13)
+        idL                     Index (bit0-6)
+        version                 obj's version number
+        data                    *3
+        F7                      End of Excl
+
+ After receiving this message & data, transmits Func=24 message.
+
+ Note: when the instrument receives messages of this type, the data is not
+ committed to storage until a Store Bank Request has been received. You may send
+ multiple objects to a single bank (e.g., Program U-A000 ~ U-A127) and follow
+ this with a single Store Bank Request for that bank.
+
+ The instrument transmits messages of this type in response to Object Dump
+ Requests (function 72) or by using Dump menu items from the Global/MIDI menu.
+ In the case of the latter, the instrument also sends Store Bank Requests at the
+ end of each bank it has transmitted.
+ 
+ See the files in SysExDumps for data structure details.
+
+
+[76] Store Bank Request                                                   Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        76                      Function
+        obj                     *1
+        bank                    *2
+        F7                      End of Excl
+
+ After receiving this message, commits the specified bank to non-volatile
+ storage. Instrument then transmits a Reply message (function 24). Use this
+ message after sending the instrument Object Dump (function 73) messages. The
+ instrument also transmits this message after using the instrument's menus to
+ sending dumps, but not in response to Object Dump Request messages.
+
+ Some object types interact with others, such that it may not be necessary to
+ send one for each object type received.
+
+        - Program name (0x13) is a subset of Program (0x00). Storing a program
+          bank stores its program names too.
+
+        - Combi name (0x12) is a subset of Combi (0x01).
+
+        - Song name (0x14) is a subset of Song Timbre Set (0x02).
+
+        - Song Timbre Set (0x02) and Song Control (0x08). After sending objects
+          of both of these kinds it is necessary to send a Store Bank Request of
+          only one of them (e.g., send Song Timbre Sets and Song Control objects
+          for songs 0..5, and then send Store Bank Request for Song Timbre Set).
+
+        - Drum Kit name (0x16) is a subset of Drum Kit (0x04).
+
+        - Wave Seq name (0x15) is a subset of Wave Seq (0x05).
+
+        - Set List slot name (0x11) & comments (0x10), and Set List name (0x17)
+          are all subsets of Set List (0x0d).
+
+
+[77] Dump Bank Request                                                    Receive
+        F0, 42, 3g, 68          Excl Header
+        77                      Function
+        obj                     *1
+        bank                    *2
+        F7                      End of Excl
+
+ Requests the instrument to send a series of Object Dump messages (function 73)
+ for the specified object type and bank. This is a shorthand for requesting each
+ object one at a time with function 72.
+
+ Instrument responds with a Reply message (function 24) for invalid requests.
+
+ Nearly all object types supported by functions 72/73 are are supported. The
+ following are not supported:
+        09 : Song Event (currently disabled)
+        0C : KARMA GE RTP Info (KARMA_GE_RTP.txt)
+        0F : Drum Track Pattern Event (DrumTrackPatternEvent.txt)
+
+
+[74] Current Object Dump Request                                          Receive
+        F0, 42, 3g, 68          Excl Header
+        74                      Function
+        obj                     *1
+        F7                      End of Excl
+
+ Requests the instrument to send the contents of the edit buffer for the
+ specified object type as a Current Object Dump message (function 75).
+ Instrument responds with a Reply message (function 24) for invalid requests.
+
+
+[75] Current Object Dump                                                  Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        75                      Function
+        obj                     *1
+        version                 obj's version number
+        data                    *3
+        F7                      End of Excl
+
+ This message type is sent in response to a Current Object Dump Request. There
+ is no method to send messages of this type from the instrument's user
+ interface. Instrument sends a Reply message (function 24) on receipt of
+ messages of this type. When receiving this message type, the contents of the
+ specified object type's edit buffer is resplaced. The object is not stored
+ however until the user writes the object using the instrument's menus or front
+ panel.
+
+ See the files in SysExDumps for data structure details.
+
+
+[37] Bank Digest Request                                                  Receive
+        F0, 42, 3g, 68          Excl Header
+        37                      Function
+        obj                     *1
+        bank                    *2
+        F7                      End of Excl
+
+ Request that the instrument send a function 0x38 bank digest for the specified
+ bank. Only a subset of the object types are allowed:
+        00 : Program
+        01 : Combination
+        03 : Global
+        04 : Drum Kit
+        05 : Wave Seq
+        06 : KARMA GE
+        07 : KARMA Template
+        0A : Song Region
+        0D : Set List
+        0E : Drum Track Pattern
+        18 : Song
+
+ Digests are not available for the GM program and drum kit banks.
+
+[38] Bank Digest                                                          Transmit
+        F0, 42, 3g, 68          Excl Header
+        38                      Function
+        obj                     *1
+        bank                    *2
+        digest                  20-byte SHA-1 digest, converted to 7-bit sys/ex
+                                format (23 bytes) *3
+        F7                      End of Excl
+
+ Instrument transmits this message in response to function 0x37, and also
+ whenever bank storage is changed by any means other than by sys/ex. For
+ example, writing a program to storage, loading a PCG, and changing user bank
+ types all send this as a notification, while receiving function 0x73 object
+ dumps do not.
+ 
+ Because this is a fairly short message, the instrument does not disable
+ starting new notes while it is being sent.
+ 
+ Digest is a 20-byte SHA-1 digest generated from the bank data, in the same
+ format as is sent via func 0x73 and 0x75 dumps (prior to 8- to 7-bit
+ conversion). Bank elements are hashed in sequential order. For example, the
+ digest for program bank I-A is generated from I-A000, I-A001, ... I-A127.
+ 
+ See http://linux.die.net/man/3/evp_digestinit for OpenSSL digest documentation.
+
+[39] Bank Digest Collection Request                                       Receive
+        F0, 42, 3g, 68          Excl Header
+        39                      Function
+        F7                      End of Excl
+
+ Request that the instrument send a function 3A bank digest collection.
+
+[3A] Bank Digest Collection                                               Transmit
+        F0, 42, 3g, 68          Excl Header
+        3A                      Function
+        numEntriesMSB
+        numEntriesLSB           Number of entries (1..16383)
+        data                    Array of DigestCollectionEntry objects, converted
+                                as a whole to 7-bit sys/ex format. *3
+        F7                      End of Excl
+
+ Collection of all availble digests which may be requested individually with
+ function 37. Instrument sends this in response to function 39. It is never sent
+ unsolicited. Since this is a long message, the instrument must disable starting
+ new notes while it is being sent. Compare this with function 38, which does not
+ disable starting new notes.
+
+        data
+        {
+            DigestCollectionEntry entries[numEntries]
+        }
+
+        // the contents of this structure is equivalent to the information in a
+        // single function 38 digest.
+        struct DigestCollectionEntry
+        {
+            unsigned char   obj;        // *1
+            unsigned char   bank;       // *2
+            unsigned char   digest[20]; // 20-byte SHA-1 digest
+        };
+
+ For any given software release, numEntries will be a constant and the order of
+ the contents of the digest will be constant. Both may change from release to
+ release though.
+
+
+[30] Current Sample Information Request                                   Receive
+
+        F0, 42, 3g, 68          Excl Header
+        30                      Function
+        kind                    *8
+        bank                    a 16-byte MultisampleBankUUID encoded into
+                                19 sys/ex data bytes. See *3, *8
+        F7                      End of Excl
+
+ Request sample information (function 31) of the specified kind for the
+ specified bank. Responds with Reply (function 24) for an invalid request.
+
+ Some kinds use the bank UUID field (e.g., kinds 1-4, 6-9), while others do not
+ (e.g., kinds 0, 5). For cases where the bank UUID is unused, fill with all 0s.
+
+
+[31] Current Sample Information                                           Transmit
+
+        F0, 42, 3g, 68          Excl Header
+        31                      Function
+        kind                    *8
+        bank                    a 16-byte MultisampleBankUUID encoded into
+                                19 sys/ex data bytes. See *3, *8
+        sysExSize (0aaaaaaa) (MSB)
+        sysExSize (0bbbbbbb)
+        sysExSize (0ccccccc)
+        sysExSize (0ddddddd) (LSB)
+                                28-bit count of sys/ex data bytes between here
+                                and the F7 (a << 21 | b < 14 | c < 7 | d). See
+                                *3 for how to convert this to the number of
+                                binary data bytes that this represents.
+        data                    Binary data converted to sys/ex. *3
+        F7                      End of Excl
+
+ The contents of data depend on the kind. Some messages have no data, in which
+ case sysExSize is 0, and F7 immediately follows the sysExSize LSB. Bank and
+ data are 8-bit data converted to 7-bit data for transmission (see *3).
+
+ frequently used data types
+
+        struct MultisampleBankUUID
+        {
+            unsigned char value[16];
+        }
+
+        struct ObjectName
+        {
+            char name[24];      // this string is not nul-terminated
+        }
+
+        UnsignedBE16 unsigned 16-bit integer, big endian
+
+ Kind 0: List of Multisample Banks
+
+        data
+        {
+            MultisampleBankListEntry list[N]
+        }
+
+        struct MultisampleBankListEntry
+        {
+            MultisampleBankUUID bankUUID;
+            unsigned char       type;
+            char                shortName[80];  // this string is nul-terminated
+            char                longName[80];   // this string is nul-terminated
+        }
+        
+        N (# of installed banks) = binarySize / sizeof(MultisampleBankListEntry)
+
+        type: 
+            0: ROM
+            1: Sampling (current sampling session)
+            2: EXs
+            3: User
+            4: Unknown (these are referenced by voice data, but otherwise unknown)
+            5: Legacy RAM (Smp: Old RAM)
+
+        The banks are ordered in the same way that the instrument presents them
+        to the user.
+
+        Legacy RAM (4b4f5247-0000-0000-0000-00004d530002), is included in this
+        list, mainly to provide the name as it appears in the instrument (Smp:
+        Old RAM).
+
+        The bank field of the request and response messages is not used for this
+        kind. When requesting this dump, fill the bank field with 0s.
+
+ Kinds 1-4: List of Multisamples / Drum Samples in Bank
+
+        data
+        {
+            SampleInfoListEntry list[N]
+        }
+
+        struct SampleInfoListEntry
+        {
+            UnsignedBE16    num;                // multisample / sample number number
+            ObjectName      name;
+            unsigned char   numStartOffsets;
+        }
+
+        N = binarySize / sizeof(SampleInfoListEntry). N may be 0.
+        
+        This information is unavailable for User Banks which are completely
+        unloaded. N=0 in this case.
+
+        Legacy RAM (4b4f5247-0000-0000-0000-00004d530002) acts as an alias for
+        the current sampling session id. If you request sample information for
+        both the current sampling session (as indicated by kind 0 or kind 19),
+        you will receive to identical lists. They are not however separate
+        banks.
+
+ Kind 5: List of Currently Loaded Multisample Banks
+
+        data
+        {
+            MultisampleBankUUID listOfLoadedBanks[N]
+        }
+
+        N = binarySize / sizeof(MultisampleBankUUID). In practice N will never
+        be 0, because ROM cannot be unloaded.
+
+        Legacy RAM (4b4f5247-0000-0000-0000-00004d530002) is not included in
+        this list.
+
+        The bank field of the request and response messages is not used for this
+        kind. When requesting this dump, fill the bank field with 0s.
+
+ Kinds 6-9: Bitmaps of Loaded Multisamples / Drum Samples in Bank
+
+        A bit array of flags indicating which of the multisamples or drum samples
+        listed in a Kind 1-4 dump is currently loaded.
+
+        data
+        {
+            unsigned char bitArray[M]
+        }
+
+        M = (max sample # + 1 + 7) / 8
+
+        each bit corresponds to a the multisample or drum sample numbers appearing in
+        Kind 1-4's list:
+
+            isLoaded = (bitArray[num / 8] >> (num % 8)) & 1
+
+        1 indicates multisample or drum sample num is loaded.
+
+        Note: this information is unavailable for User Banks which are
+        completely unloaded. N=0 in this case.
+        
+ Kinds 10-11: Not used
+
+ Kind 12: Notification of Multisample Bank Members Loaded or Unloaded
+
+        Instrument sends this message when the specified bank has had one or
+        more multisamples or drum samples loaded or unloaded. Use kinds 5-9 to
+        see what has changed.
+
+ Kinds 13-16: Not used
+
+ Kind 17: Notification of Multisample Bank List Change
+
+        Instrument sends this message when the bank list has changed. This can
+        happen when the sampling session changes, when a previously unknown bank
+        is found, etc. Request a new kind 0 dump to see what changed. The bank
+        field of this notification is unused, and contains all 0s.
+
+ Kind 18: Notification of Multisample / Drum Sample in Bank Change
+
+        Instrument sends this message when the contents of the specified bank
+        has changed (e.g., a sample in the current sampling session has changed
+        name or been moved). Request kinds 1-4 to see what changed. This implies
+        that kinds 6-9 may also have changed.
+
+ Kind 19: Notification of Current Sampling Sessions Bank Id
+
+        Instrument sends this notification when the current sampling session
+        bank id has changed. The message indicates the new sampling session bank
+        UUID.
+        
+        !!! this may be superfluous, because changing sampling session id also
+        requires refreshing kind 0. it may be that this message always coincides
+        with a kind 17 notificatian.
+
+
+[32] Current Performance Id Request                                       Receive
+
+    Form 1:
+        F0, 42, 3g, 68          Excl Header
+        32                      Function
+        F7                      End of Excl
+
+    Form 2:
+        F0, 42, 3g, 68          Excl Header
+        32                      Function
+        type
+        F7                      End of Excl
+
+ Request Kronos to send a Current Performance Id (function 33) message.
+ 
+ The first form requests the currently active performance in the instrument.
+ The second form requests the last activated performance of the specified type
+ (see function 33).
+ 
+ Instrument responds with Reply (function 24) and an error code if the request
+ cannot currently be satisfied. Examples of times when this will happen are
+ Sampling mode, Drum Kit editing, and Wave Sequence editing.
+
+[33] Current Performance Id                                               Transmit
+        F0, 42, 3g, 68          Excl Header
+        33                      Function
+        type
+        bank
+        number (MSB)
+        number (LSB)
+        F7                      End of Excl
+
+        type
+            0: combi
+            1: program
+            2: song
+
+        bank
+                combi   prog    song
+            0:  I-A     I-A     -
+            1:  I-B     I-B     -
+            :
+            5:  I-F     I-F     -
+            6:  U-A     GM      -
+            7:  U-B     g(1)    -
+            :
+           13:  U-G     g(7)    -
+           14:  -       g(8)    -
+           15:  -       g(9)    -
+           16:  -       g(d)    -
+           17:  -       U-A     -
+           18:  -       U-B     -
+            :
+           23:  -       U-G     -
+           24:  -       U-AA    -
+           25:  -       U-BB    -
+            :
+           30:  -       U-GG    -
+
+        number
+            0..127 for programs and combis
+            0..199 for songs
+
+ (these are the same ranges of Type, Bank, and Number as used in set list slot
+ performances. See SysExParams/SetList.txt)
+
+ Note: in Set List mode, this message indicates the type, bank, and number of
+ the selected performance (i.e., the contents of the set list slot), and not the
+ set list and slot number.
+
+
+[34] Current Piano Types Request                                          Receive
+
+        F0, 42, 3g, 68          Excl Header
+        34                      Function
+        F7                      End of Excl
+
+ Request Current Piano Types dump (function 35).
+
+
+[35] Current Piano Types                                                  Transmit
+
+        F0, 42, 3g, 68          Excl Header
+        35                      Function
+        sysExSize (MSB)
+        sysExSize
+        sysExSize
+        sysExSize (LSB)         28-bit count of sys/ex data bytes between here
+                                and the F7. See *3.
+        data                    *3
+        F7                      End of Excl
+
+ Instrument sends this message in response to Request Current Piano Types dump
+ (function 35). Payload is 8-bit data converted to 7-bit data for transmission
+ (see *3) with the following format:
+
+        data
+        {
+            PianoTypeInfo info[N]
+        }
+
+        struct PianoTypeInfo
+        {
+            UnsignedBE16        index;
+            char                name[25];  // this string is nul-terminated
+        }
+
+        UnsignedBE16 unsigned 16-bit integer, big endian
+
+        N (# of found Piano Types) = binarySize / sizeof(PianoTypeInfo)
+
+        Entries are sorted by index. Index values may be a sparse list (e.g.,
+        0..47, 64..72, 90..100)
+
+
+[36] Current Piano Types Request                                          Transmit
+
+        F0, 42, 3g, 68          Excl Header
+        36                      Function
+        F7                      End of Excl
+
+ Instrument sends this message whenever the current set of Piano Types changes.
+ Send a Current Piano Types Request (function 34) to get the current set.
+
+
+[79] SMF Data Dump Request                                                Receive
+        F0, 42, 3g, 68          Excl Header
+        79                      Function
+        songNumH                (bits 7-13)
+        songNumL                (bits 0-6)
+        trackNum
+        startMeasH              (bits 7-13)
+        startMeasL              (bits 0-6)
+        endMeasH                (bits 7-13)
+        endMeasL                (bits 0-6)
+        00                      reserved
+        F7                      End of Excl
+
+
+[7A] SMF Data Dump                                                        Transmit
+        F0, 42, 3g, 68          Excl Header
+        7A                      Function
+        error code              0 for success, non-zero error code on failure.
+        sizeH                   (bits 14-20) # of binary data bytes (i.e., prior
+                                to 7 to 8-byte conversion)
+        sizeM                   (bits 7-13)
+        sizeL                   (bits 0-6)
+        00                      reserved
+        data                    *3
+        F7                      End of Excl
+
+ Transmitted in response to an SMF Data Dump Request message (function 79).
+
+
+[43] Parameter Change (integer)                                           Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        43                      Function
+        TYP                     part of parameter id (see combi.txt, etc)
+        SOC                     part of parameter id (see combi.txt, etc)
+        SUB                     part of parameter id (see combi.txt, etc)
+        PID                     part of parameter id (see combi.txt, etc)
+        IDX                     part of parameter id (see combi.txt, etc)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+ or
+
+        DEPRECATED
+
+        F0, 42, 3g, 68          Excl Header
+        43                      Function
+        TYP                     part of parameter id (see combi.txt, etc)
+        SOC                     part of parameter id (see combi.txt, etc)
+        SUB                     part of parameter id (see combi.txt, etc)
+        7F                      part of parameter id (see combi.txt, etc)
+        PIDH                    (bits 7-14) part of parameter id (see combi.txt, etc)
+        PIDL                    (bits 0-6) part of parameter id (see combi.txt, etc)
+        IDX                     part of parameter id (see combi.txt, etc)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+        DEPRECATED
+
+ Most of the instrument's parameters (mainly those that control the synthesis
+ engine) can be edited with this kind of message. There are some other special
+ case parameter messages (e.g., Drum Kit Parameter Change, Wave Seq Parameter
+ Change, etc) for controlling other specific sets of parameters. Which
+ parameters are currently available for editing depends on the instrument's mode
+ (e.g., combi parameters are only allowed while in combi mode).
+
+ The first form is used for parameter ids 0..126, the second form is for
+ parameter ids 127..16383. As a convenience, the instrument accepts either form
+ for parameter ids 0..126.
+
+ Note: the second form has been deprecated for lack of use. The instrument will
+ continue to receive it, but not transmit it.
+
+[44] Parameter Change (binary)                                            Receive/Transmit
+
+        F0, 42, 3g, 68          Excl Header
+        44                      Function
+        TYP                     part of parameter id (see combi.txt, etc)
+        SOC                     part of parameter id (see combi.txt, etc)
+        SUB                     part of parameter id (see combi.txt, etc)
+        PID                     part of parameter id (see combi.txt, etc)
+        IDX                     part of parameter id (see combi.txt, etc)
+        value type              *9
+        value[]                 *3
+        F7                      End of Excl
+
+ Certain instrument parameters take binary data instead of a 21-bit integer
+ value. These use function 44 instread of function 43. Currently the only type
+ of these is UUID (16-byte binary data).
+
+ Note: 14-bit param id is not supported for these.
+
+
+[41] Sequencer Parameter Change                                           Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        41                      Function
+        TYP                     part of parameter id (see combi.txt, etc)
+        SOC                     part of parameter id (see combi.txt, etc)
+        SUB                     part of parameter id (see combi.txt, etc)
+        PID                     part of parameter id (see combi.txt, etc)
+        IDX                     part of parameter id (see combi.txt, etc)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+
+[6D] KARMA Parameter Change                                               Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        6D                      Function
+        TYP                     part of parameter id (see combi.txt, etc)
+        SOC                     part of parameter id (see combi.txt, etc)
+        SUB                     part of parameter id (see combi.txt, etc)
+        PID                     part of parameter id (see combi.txt, etc)
+        IDX                     part of parameter id (see combi.txt, etc)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+
+[6E] Drum Track Parameter Change                                          Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        6E                      Function
+        TYP                     part of parameter id (see combi.txt, etc)
+        SOC                     part of parameter id (see combi.txt, etc)
+        SUB                     part of parameter id (see combi.txt, etc)
+        PID                     part of parameter id (see combi.txt, etc)
+        IDX                     part of parameter id (see combi.txt, etc)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+
+[71] Set Current Object                                                   Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        71                      Function
+        obj                     object type: 0=drum kit, 1=wave seq
+        idH                     Index (bit7-13)
+        idL                     Index (bit0-6)
+        F7                      End of Excl
+
+ This message identifies which drum kit or wave sequence is being edited with
+ Drum Kit or Wave Seq Parameter Change messages (functions 53 and 55).
+
+ Index indicates which drum kit or wave sequence to select, using linear
+ addressing instead of bank + id. This is the same means of addressing drum kits
+ and wave sequences used by the HD-1 MS number parameter.
+
+ Drum Kit Mapping
+
+         linear #         bank + id
+          0 .. 39        I-00 .. I-39
+         40 .. 55       U-A00 .. U-A15
+         56 .. 71       U-B00 .. U-B15
+            :
+        136 .. 151      U-G00 .. U-G15
+        152 .. 160        GM0 .. GM8
+        161 .. 176     U-AA00 .. U-AA15
+            :
+        257 .. 272     U-GG00 .. U-GG15
+
+ Wave Seq Mapping
+
+         linear #         bank + id
+          0 .. 149      I-000 .. I-149
+        150 .. 181      U-A00 .. U-A31
+            :
+        342 .. 373      U-G00 .. U-G31
+        374 .. 405     U-AA00 .. U-AA31
+            :
+        566 .. 597     U-GG00 .. U-GG31
+
+
+[53] Drum Kit Parameter Change (integer)                                  Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        53                      Function
+        VSP                     velocity split (see DrumKit.txt)
+        note                    midi note # (0-7F)
+        PID                     part of parameter id (see DrumKit.txt)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+ See DrumKit.txt for details.
+
+
+[54] Drum Kit Parameter Change (binary)                                   Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        54                      Function
+        VSP                     velocity split (see DrumKit.txt)
+        note                    midi note # (0-7F)
+        PID                     part of parameter id (see DrumKit.txt)
+        value type              *9
+        value[]                 *3
+        F7                      End of Excl
+
+ See DrumKit.txt for details.
+
+
+[55] Wave Seq Parameter Change (integer)                                  Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        55                      Function
+        step                    step index (0-3F)
+        PID                     part of parameter id (see WaveSequence.txt)
+        valueH                  Value   (bit14-20)   (*4)
+        valueM                  Value   (bit7-13)    (*4)
+        valueL                  Value   (bit0-6)     (*4)
+        F7                      End of Excl
+
+ See WaveSequence.txt for details.
+
+
+[56] Wave Seq Parameter Change (binary)                                   Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        56                      Function
+        step                    step index (0-3F)
+        PID                     part of parameter id (see WaveSequence.txt)
+        value type              *9
+        value[]                 *3
+        F7                      End of Excl
+
+ See WaveSequence.txt for details.
+
+
+[12] Mode Request                                                         Receive
+        F0, 42, 3g, 68          Excl Header
+        12                      Function
+        F7                      End of Excl
+
+ Requests that the instrument send a Mode Data message (function 42).
+
+
+[42] Mode Data                                                            Transmit
+        F0, 42, 3g, 68          Excl Header
+        42                      Function
+        0000 mmmm               Mode                    (*5)
+        0ooo oooo               Option                  (*7)
+        0sss ssss               Setup data1             (*7)
+        0ddd dddd               Setup data2             (*7)
+        0eee eeee               Setup data3             (*7)
+        F7                      End of Excl
+
+ After receiving Func=12 message, transmits this message & data.
+
+
+[48] Edit In Context Notify                                               Transmit
+        F0, 42, 3g, 68          Excl Header
+        48                      Function
+        0sss ssss               State                   (1:Enter, 0:Leave)
+        0--- eeee               Edit Mode               (*5)
+        0--- cccc               Context Mode            (*5)
+        0ddd dddd               data                    (ex. Timbre Number)
+        F7                      End of Excl
+
+
+[4E] Mode Change                                                          Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        4E                      Function
+        0000 mmmm               Mode                    (*5)
+        F7                      End of Excl
+
+ After receiving this message & data, changes the Mode, and transmits Func=24 message.
+ When the Mode is changed by SW, transmits this message & data.
+
+
+[60] Program Bank Types Request                                           Receive
+        F0, 42, 3g, 68          Excl Header
+        60                      Function
+        F7                      End of Excl
+
+ After receiving this message, Kronos sends a Program Bank Types (func 61)
+ message.
+
+
+[61] Program Bank Types                                                   Transmit
+        F0, 42, 3g, 68          Excl Header
+        61                      Function
+        numBits                 number of bits in bitmap
+        data[]
+        F7                      End of Excl
+
+ Instrument sends this message when loading program banks from a PCG file, or
+ when the user changes a program bank type via the Set Program Bank Type
+ menu. Transmission of this message does not necessarily indicate that there was
+ a change in state (e.g., it is always sent when loading program banks from
+ a PCG file). Additionally, this message is sent in response to Program Bank
+ Types Request (func 60).
+
+ Data is a bitmap indicating the format of the program edit buffer and all
+ programs banks. A bit value of 1 indicates EXi, 0 indicates HD-1. The number of
+ data bytes is:
+ 
+    numDataBytes = (numBits + 6) / 7
+
+ Currently with 20 program banks, numBits is 21 and data[] is formatted as
+ follows:
+
+    data[0]
+        bit 0: edit buffer
+        bit 1: I-A
+        :
+        bit 6: I-F
+    
+    data[1]
+        bit 0: U-A
+        :
+        bit 6: U-G
+    
+    data[2]
+        bit 0: U-AA
+        :
+        bit 6: U-GG
+
+ If more user program banks are added in the future, they will be added starting
+ at data[3] bit 0, and numBits will increase.
+
+
+[7C] Change Program Bank Type                                             Receive
+        F0, 42, 3g, 68          Excl Header
+        7C                      Function
+        bank                    *2
+        type                    0: HD-1, 1: EXi
+        F7                      End of Excl
+
+ After receiving this message, if the new type doesn't match the current type,
+ reformats and erases specified bank. After that transmits Func=24 message.
+
+
+[7D] Query Program Bank Type                                              Receive
+        F0, 42, 3g, 68          Excl Header
+        7D                      Function
+        bank                    *2
+        F7                      End of Excl
+
+ Request the bank type of the specified program bank. Instrument responds with a
+ Query Program Bank Type Reply (function 7E) or Reply (function 24) for invalid
+ requests.
+
+ This message has been deprecated. Use Program Bank Types Request (func 60)
+ instead.
+
+
+[7E] Query Program Bank Type Reply                                        Transmit
+        F0, 42, 3g, 68          Excl Header
+        7E                      Function
+        type                    0: HD-1, 1: EXi
+        F7                      End of Excl
+
+ Sent in response to a Query Program Bank Type message (function 7D).
+
+
+[78] Reset Controller                                                     Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        78                      Function
+        channel                 MIDI channel
+        cc                      CC# (0-119)
+        F7                      End of Excl
+
+ Transmits this message when RESET CONTROLS is used with a controller assigned
+ to CC 17, 19, 20, or 21. These CCs are special because they generate both
+ unipolar and bipolar AMS and DMod signals. The special reset state for these is
+ with the controller set to 64 and all AMS and DMod signals set to 0.
+
+ Receiving this message resets any CC to its default value.
+
+
+[7F] KARMA Control                                                        Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        7F                      Function
+        kind                    See below
+        message                 Kind-specific message. Format and length depends
+                                on kind. See details below
+        F7                      End of Excl
+
+  kind 0: KARMA Waveform Select Message (Receive/Transmit)
+        channel                 MIDI Channel
+        patch                   0 or 1
+        ms bank                 0..0x7e, OR 0x7f: Ignore Bank
+        ms# lsb
+        ms# msb                 0..N-1, where N is # of multisamples in bank,
+                                or 0x7f 0x7f (16383): ignore MS#
+        start offset            start offset (0..8), 0xf: ignore start offset
+        type                    0: off, 1: multisample, 2: wave seq, 0xf: ignore type
+
+  kind 1: Waveform Reset Message (Receive/Transmit)
+        channel                 MIDI Channel
+
+  kind 2: Vector Trigger Message (Receive/Transmit)
+        channel                 MIDI Channel (always set to global)
+        value                   0 = off, 1 = on
+ 
+  kind 3: Switch Modified State Message (Transmit)
+        module                  0..3
+        scene                   0..7
+        data[]                  2 bytes binary packed in KORG 8/7 binary format (*3)
+
+        When converted back to binary, data[] is:
+
+            unsigned char    switch;         // bit0 : SW1 bit7 : SW8
+            unsigned char    switchModified; // bit0 : SW1 bit7 : SW8
+
+  kind 4: Slider Modified State Message (Transmit)
+        module                  0..3
+        scene                   0..7
+        slider id               0..7
+        data[]                  1 byte binary packed in KORG 8/7 binary format (*3)
+
+        When converted back to binary, data[] is:
+
+            signed char      sliderValue;    // Current Slider Value, -1 = unmodified
+
+  kind 5: Module Modified State Message (Transmit)
+        module                  0..3
+        data[]                  80 bytes binary packed in KORG 8/7 binary format (*3)
+
+        when converted back to binary, data[] is an array containing 8 instances
+        of this structure, one for each scene:
+
+        struct KarmaModifiedState {
+            unsigned char    switch;         // bit0 : SW1 bit7 : SW8
+            unsigned char    switchModified; // bit0 : SW1 bit7 : SW8
+            signed char      sliderValue[8]; // Current Slider Value, -1 = unmodified
+        };
+
+
+[13] Song Select                                                          Receive/Transmit
+        F0, 42, 3g, 68          Excl Header
+        13                      Function
+        00,                     (reserved)
+        songNumMSB,             14-bit song number, MSB first
+        songNumLSB,
+        F7                      End of Excl
+
+ This message is an extended-range form of the MIDI song select system message
+ F3. Unlike F3, it is capable of selecting songs 0..16383. Also unlike F3, this
+ message is transmitted and received regardless of the instrument's MIDI clock
+ sync setting.
+
+
+[24] Reply                                                                Transmit
+        F0, 42, 3g, 68          Excl Header
+        24                      Function
+        Reply Code              *6
+        F7                      End of Excl
+
+ Transmits this message as a reply for some received message. In some cases this
+ message is sent only when an error occurs and has a non-zero Reply Code. In
+ others (e.g., after receiving an Object Dump) a Reply message is always sent.
+ In these cases a Reply Code of zero indicates success, while a non-zero Reply
+ Code indicates failure.
+
+
+*1
+        obj = 00 : Program (Prog_EXi_Common.txt, Prog_EXi.txt, Prog_HD-1.txt)
+              01 : Combination (CombiAndSongTimbreSet.txt)
+              02 : Song Timbre Set (CombiAndSongTimbreSet.txt)
+              03 : Global (Global.txt)
+              04 : Drum Kit (DrumKit.txt)
+              05 : Wave Seq (WaveSequence.txt)
+              06 : KARMA GE (NOTE: GEs are not edited on the instrument, so
+                   there is no edit buffer)
+              07 : KARMA Template
+              08 : Song Control (SongControl.txt)
+              09 : Song Event (currently disabled)
+              0A : Song Region
+              0B : Reserved
+              0C : KARMA GE RTP Info (KARMA_GE_RTP.txt)
+              0D : Set List (index=set list) (SetList.txt)
+              0E : Drum Track Pattern (DrumTrackPattern.txt)
+              0F : Drum Track Pattern Event (DrumTrackPatternEvent.txt)
+              10 : Set List Slot Comments (bank=set list, index=slot)
+              11 : Set List Slot Name (bank=set list, index=slot)
+              12 : Combi Name
+              13 : Program Name
+              14 : Song Name
+              15 : Wave Seq Name
+              16 : Drum Kit Name
+              17 : Set List Name (index=set list)
+              18 : Song (Song Timbre Set and Song Control in a single object. Song.txt)
+
+ The table above includes the names of associated documentation files in SysExDumps.
+
+*2
+ The meaning of bank depends on the object type.
+
+ Program, Program Name:
+        bank =  0 -  5 : INT-A - F
+               10 - 1A : GM, g(1)-g(9), g(d) (read-only)
+               40 - 4d : USER-A - G, AA - GG
+
+ Combi, Combi Name:
+        bank =  0 -  6 : INT-A - G
+               40 - 46 : USER-A - G
+
+ Drum Kit, Drum Kit Name:
+        bank =       0 : INT
+                    10 : GM (read-only)
+               40 - 4d : USER-A - G, AA - GG
+
+ Wave Seq, Wave Seq Name:
+        bank =       0 : INT
+               40 - 4d : USER-A - G, AA - GG
+
+ KARMA GE:
+        bank =  0 -  B : USER-A - L
+
+ KARMA Template:
+        bank =  0 -  3 : USER-A - D
+
+ KARMA GE RTP Info:
+        bank =  0
+        index = 0 - 2047: Preset
+                2048 -  : U-A000 - 
+
+ Set List Slot Comments, Set List Slot Name
+        bank =  0 - 7F : set list #
+
+ For all other types (e.g., Song, Set List, etc) bank must be 0.
+
+*3
+ The detailed information about "data," see the text files specific to HD-1, EXi, etc.
+ Internal data is converted to MIDI data using following method.
++----------------------------------------------------------------------------------------+
+|  Internal 7byte data <--convert--> MIDI 8 byte data                                    |
+|  example) Internal data(bit image) MIDI data(bit image)                                |
+|                Aaaaaaaa            0GFEDCBA                                            |
+|                Bbbbbbbb            0aaaaaaa                                            |
+|                Cccccccc            0bbbbbbb                                            |
+|                Dddddddd            0ccccccc                                            |
+|                Eeeeeeee            0ddddddd                                            |
+|                Ffffffff            0eeeeeee                                            |
+|                Gggggggg            0fffffff                                            |
+|                Hhhhhhhh            0ggggggg                                            |
+|                Iiiiiiii            0NMLKJIH                                            |
+|                   :                0hhhhhhh                                            |
+|                   :                   :                                                |
+|                Vvvvvvvv            000000WV                                            |
+|                Wwwwwwww            0vvvvvvv                                            |
+|                                    0wwwwwww                                            |
+|                                    11110111 (EOX=F7H)                                  |
++----------------------------------------------------------------------------------------+
+ 
+ binarySize: number of 8-bit binary data bytes in memory
+ sysExSize: number of 7-bit sys/ex data bytes
+ 
+ sysExSize = binarySize + (binarySize+6)/7
+
+ binarySize = (sysExSize/8)*7 + (sysExSize%8 ? sysExSize%8-1 : 0)
+
+*4
+ The format is 21-bit 2's complement. Typical use is to convert this to a 32-bit 
+ signed integer:
+ 
+         valueH : 0scccccc
+         valueM : 0bbbbbbb
+         valueL : 0aaaaaaa
+
+         int    : ssssssss sssscccc ccbbbbbb baaaaaaa
+
+*5
+        mmm = 0 : COMBINATION
+              1 : reserved
+              2 : PROGRAM
+              3 : reserved
+              4 : SEQUENCER
+              5 : reserved
+              6 : SAMPLING
+              7 : GLOBAL
+              8 : DISK
+              9 : SET LIST
+
+*6
+        cc =  0 : No error
+              1 : parameter type specified is incorrect for current mode
+              2 : unknown param message type, unknown parameter id or index
+              3 : short or otherwise mangled message
+              4 : target object not found
+              5 : insufficient resources to complete request
+              6 : paramter value is out of range
+              7 : (internal error code)
+             64 : other error:
+                    - program bank is wrong type for received program dump (Func 73, 75).
+                    - invalid data in Preset Pattern Dump (Func 7B).
+             65 : target object is protected
+             66 : memory overflow
+
+*7
+        oo : bit 0   = 0 : No EXB-DI, = 1 : EXB-DI is installed (always 0 for KRONOS)
+
+        ss : bit 0,1 = 0 : Note Receive is All,    = 1 : Even,          = 2 : Odd
+             bit 2-4 = 0 : MIDI Clock is Internal, = 1 : External MIDI, = 2 : Auto MIDI, = 3 : External USB, = 4 : Auto USB
+
+        dd : bit 0   = 0 : Prog Mem is not protected,          = 1 : protected
+             bit 1   = 0 : Combi Mem is not protected,         = 1 : protected
+             bit 2   = 0 : Song Mem is not protected,          = 1 : protected
+             bit 3   = 0 : Drum Kit Mem is not protected,      = 1 : protected
+             bit 4   = 0 : Wave Seq Mem is not protected,      = 1 : protected
+             bit 5   = 0 : KARMA GE Mem is not protected,      = 1 : protected
+             bit 6   = 0 : Internal HDD Save is not protected, = 1 : protected
+
+        ee : bit 0   = 0 : Set List Mem is not protected,      = 1 : protected
+
+*8
+ Sample Information request and dump
+
+       kind =   0 : List of Multisample Banks
+                1 : List of Mono Multisamples in Bank
+                2 : List of Stereo Multisamples in Bank
+                3 : List of Mono Drum samples in Bank
+                4 : List of Stereo Drum samples in Bank
+                5 : List of Currently Loaded Multisample Banks
+                6 : Bitmap of Currently Loaded Mono Multisamples in Bank
+                7 : Bitmap of Currently Loaded Stereo Multisamples in Bank
+                8 : Bitmap of Currently Loaded Mono Drum Samples in Bank
+                9 : Bitmap of Currently Loaded Stereo Drum Samples in Bank
+               10 : not used
+               11 : not used
+               12 : Notification of Multisample Bank Members Loaded or Unloaded
+               13 : not used
+               14 : not used
+               15 : not used
+               16 : not used
+               17 : Notification of Multisample Bank List Change
+               18 : Notification of Multisamples / Drum Samples in Bank Change
+               19 : Notification of Current Sampling Sessions Bank Id
+
+       bank =   MultisampleBankUUID encoded for sys/ex
+
+ Note that bank doesn't apply to all kinds of sample information. It is
+ supported for kinds: 1-4, 6-9, 12, 18-19. Otherwise bank all zeros.
+
+*9
+ Binary parameter value type
+
+                02: UUID
+
+*10
+ Multisample Bank UUIDs
+
+ Standard 128-bit (16-byte) unique identifiers are used to identify multisample
+ banks. See http://en.wikipedia.org/wiki/UUID for more information about UUIDs
+ in general.
+
+ For use as Multisample Bank IDs, there are some special values and meanings to
+ certain bits of the UUID.
+
+ * Stereo flag in UUID
+
+ All multisample bank UUIDs have the upper 127 bits for the bank ID, and the
+ least significant bit (byte 15, bit 0) reserved for a mono/stereo flag: mono=0,
+ stereo=1. For example, 5a27d1e1-63c7-4d32-92fa-f6bc95ee6ee6 refers to the mono
+ members of a hypothetical bank, and 5a27d1e1-63c7-4d32-92fa-f6bc95ee6ee7 refers
+ to the stereo members of this same bank.
+ 
+ In situations where a bank ID only is required (e.g., Sample Info dumps) use
+ the mono form (byte 15, bit 0 is 0).
+
+ * Reserved invalid IDs
+
+ The following UUIDs are reserved as invalid: 
+
+     00000000-0000-0000-0000-000000000000
+     00000000-0000-0000-0000-000000000001
+
+ * Legacy IDs
+
+ ROM, RAM, and EXs 1 through 126 are handled as "legacy IDs."
+
+ The UUID for a legacy ID is:
+
+     4b4f5247-0000-0000-0000-00004d5300nn
+
+ or as a C array:
+
+     { 'K','O','R','G',  0,0,  0,0,  0,0,  0,0,'M','S',0,nn }
+
+ where nn is the 8-bit legacy bank ID and stereo flag used in previous versions.
+ The legacy bank number (0=ROM, 1=Smp: Old RAM, 2=EXs1, etc) is in bits 1-7 of
+ byte 15, and the mono/stereo flag (as above) is in bit 0 of byte 15. Promoting
+ an 8-bit bank ID to a UUID just requires adding the above 15-byte prefix.
+
+ The 8-bit legacy bank IDs (with embedded mono/stereo flag) are as follows:
+
+       0: ROM mono
+       1: ROM stereo
+       2: Smp: Old RAM mono
+       3: Smp: Old RAM stereo
+       4: EXs1 mono
+       5: EXs1 stereo
+       ...
+     254: EXs126 mono
+     255: EXs126 stereo
+
+ The legacy bank UUID format is deliberately slightly different from normal,
+ generated UUIDs (in which a couple of specific bits are always set), so these
+ UUIDs should remain unique.
+
+ Note: EXs127 and above and all user banks use generated UUIDs. There is no
+ special meaning to byte 15, bits 1-7 of such UUIDs.
+
+ Bank 1 ("Smp: Old RAM") is a legacy setting preserved for compatibility with
+ pre-2.0 sounds. It refers to the Sampling Mode data regardless of the actual
+ current Sampling Mode UUID.
+
+ The 8-bit codes are still used by Tone Adjust, since Tone Adjust does not
+ operate on UUIDs.
+
+ * Generating Multisample Bank UUIDs
+
+ Normally the Kronos is responsible for generating bank UUIDs when necessary.
+ However, external software may also do this in order to create sample data
+ in native Kronos format.
+
+ As noted above, bank UUIDs are simply randomly generated UUIDs with special
+ meaning given to byte 15, bit 0. Here is a Linux/Mac OS X code fragment to
+ generate a valid Multisample Bank UUID:
+
+    #include <uuid/uuid.h>
+
+    {
+        unsigned char uuid[16];
+        
+        uuid_generate(uuid);
+        uuid[15] &= ~1;
+    }
+    
+ Equivalent Windows code:
+
+    #define RPC_NO_WINDOWS_H 1
+    #include <Rpc.h>
+
+    {
+        UUID t;
+        UuidCreate(&t);
+
+        unsigned char uuid[16];
+        uuid[0] = t.Data1 >> 24;
+        uuid[1] = t.Data1 >> 16;
+        uuid[2] = t.Data1 >> 8;
+        uuid[3] = t.Data1;
+        uuid[4] = t.Data2 >> 8;
+        uuid[5] = t.Data2;
+        uuid[6] = t.Data3 >> 8;
+        uuid[7] = t.Data3;
+        memcpy(&uuid[8], t.Data4, 8);
+        uuid[15] &= ~1;
+    }
+
+-Revision History-
+Rev     Date			Description
+1.0     July 12 2010		Initial Release.
+1.01    July 13 2010		Revised wording of file cross-reference for "data" sections; new SysEx Product ID changes headers.
+1.02    July 13 2010		Added 9 = SET LIST to mode change.
+1.03    July 24 2010		Added Set List obj = 0d; added note re no GE edit buffers	    
+1.04    Feb  23 2011		Added Set List Comment and name objs (10H an 11H, respectively), updated version byte decription for dumps
+1.05    Mar  10 2011		Added program bank type messages, new dump object types, and corrected several errors and omissions.
+1.06    Apr   1 2011		Added sample bank information messages.
+1.07    May   3 2011		Added extended-range song select message (func 13).
+1.08    May  10 2011		Added new user program, drum kit, and wave seq banks.
+1.09    May  24 2011		Correct drum kit param message byte order.
+1.10    Jul  20 2011		Added program bank types messages (funcs 60, 61), and marked single bank query and response (funcs 7D and 7E) as deprecated.
+1.11    Aug  11 2011		Add Sample Info kinds 13-16. Deprecate kinds 10-11.
+1.12    Aug  15 2011		Add function 0x7f documentation.
+1.13    Aug  22 2011		Mark Sample Info kinds 10-11 as "not used".  They had been previously deprecated.
+1.14    Aug  29 2011		Add func 0x32..0x33: request current performance id.
+1.15    Sep   7 2011		Song Event dumps are temporarily disabled pending a redesign.
+1.16    Oct  28 2011		Update for User Sampling Banks.
+1.17    Dec   7 2011		Add functions 44, 54, 56: binary params. Add notes regarding other 2.0 deprecated items and docs that will change. Remove references to 16-bit User Sampling bank items (including karma control kind 6).
+1.18    Jan  19 2012		Update sample info dumps for 2.0
+1.19    Feb  16 2012		Add Current Piano Types messages
+1.20    Apr  18 2012		Update Sample Info Dump docs. Add footnote *10 regarding Multisample Bank UUIDs
+1.21    May  10 2012		Add Bank Digest messages.
+1.22    June 15 2012		Add Dump Bank Request message and Song object type.
+1.23    Sep  19 2012		Add 2nd form of Function 32.
+1.24    Jul  09 2014		Update program bank type messages to handle the internal banks also.
+1.25    Aug  07 2014        Add function 48 "Edit In Context Notify" newly.
+1.25    Aug  21 2014		"Edit In Context Notify" message format description was corrected.

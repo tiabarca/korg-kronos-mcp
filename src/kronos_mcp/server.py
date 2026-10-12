@@ -40,8 +40,12 @@ from .protocol.constants import (
 )
 from .protocol.messages import from_hex, to_hex
 from .protocol.setlist import parse_set_list
+from . import params as P
 
 INSTRUCTIONS = """Servidor para mantener un Korg Kronos por MIDI SysEx y descubrir su mapa de parámetros en caliente.
+
+Mapas oficiales de Korg cargados (data/params): decode_object, find_parameter y set_parameter
+usan los nombres reales de cada parámetro; los diffs indican qué parámetro ha cambiado.
 
 Reglas:
 - Antes de escribir en el teclado (tools con confirm), haz backup (backup_bank / read_object save_backup) y pide confirmación al usuario.
@@ -63,7 +67,7 @@ MONITOR = Monitor(Path(os.getenv("KRONOS_LOG_DIR", PROJECT_DIR / "logs")))
 KB = KnowledgeBase(Path(os.getenv("KRONOS_KNOWLEDGE_DIR", PROJECT_DIR / "data" / "knowledge")))
 _learn_sessions: dict[str, dict] = {}
 # Peticiones que no modifican nada en el Kronos → exploración libre
-SAFE_REQUESTS = {0x12, 0x30, 0x32, 0x34, 0x37, 0x39, 0x60, 0x72, 0x74, 0x79}
+SAFE_REQUESTS = {0x12, 0x30, 0x32, 0x34, 0x37, 0x39, 0x60, 0x72, 0x74, 0x77, 0x79}
 
 ALLOW_WRITE = os.getenv("KRONOS_ALLOW_WRITE") == "1"
 BACKUP_DIR = Path(os.getenv("KRONOS_BACKUP_DIR", "backups"))
@@ -81,6 +85,19 @@ def _label(obj: int, b: int) -> str:
 
 def _bank(bank: str | int) -> int:
     return bank if isinstance(bank, int) else bank_code(bank)
+
+
+@lru_cache(maxsize=1)
+def _factory_digests() -> dict:
+    p = DATA_DIR / "factory_digests.json"
+    return json.loads(p.read_text(encoding="utf-8"))["digests"] if p.exists() else {}
+
+
+def _summary(obj: ObjType, data: bytes) -> dict:
+    try:
+        return P.summary(obj, data) if P.available() and (obj in P.MAP_FOR or obj == ObjType.PROGRAM) else {}
+    except Exception as e:  # noqa: BLE001
+        return {"summary_error": str(e)}
 
 
 @lru_cache(maxsize=1)
@@ -191,6 +208,7 @@ def read_object(obj_type: str, bank: str, index: int, save_backup: bool = False)
         res["name"] = _name(data)
     if obj == ObjType.PROGRAM:
         res["engine"] = "EXi" if len(data) == PROGRAM_SIZE_EXI else "HD-1"
+    res.update({k: v for k, v in _summary(obj, data).items() if k not in ("name",)})
     if save_backup:
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
         path = BACKUP_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_{obj.name}_{_label(obj, b)}_{index:03d}.syx"
@@ -205,8 +223,7 @@ def list_bank(obj_type: str, bank: str, start: int = 0, count: int | None = None
     obj, b = ObjType[obj_type.upper()], _bank(bank)
     end = min(bank_size(obj, b), start + count) if count else bank_size(obj, b)
     out = []
-    for i in range(start, end):
-        data, _ = client().read_object(obj, b, i)
+    for i, data in _iter_bank(obj, b, start, end):
         row = {"index": i, "name": _name(data) if obj in NAMED_TYPES else None}
         if obj == ObjType.PROGRAM:
             row["engine"] = "EXi" if len(data) == PROGRAM_SIZE_EXI else "HD-1"
@@ -214,19 +231,40 @@ def list_bank(obj_type: str, bank: str, start: int = 0, count: int | None = None
     return out
 
 
+def _bank_raw(obj: ObjType, b: int, start: int = 0, end: int | None = None) -> list[tuple[int, bytes, bytes]]:
+    """Banco completo: primero Dump Bank Request (77, un mensaje); si no llega entero, objeto a objeto (72)."""
+    n = bank_size(obj, b)
+    end = n if end is None else end
+    if start == 0 and end == n:
+        try:
+            got = client().dump_bank(obj, b, n)
+            if len(got) == n:
+                return got
+        except Exception:  # noqa: BLE001 - se cae al método lento
+            pass
+    out = []
+    for i in range(start, end):
+        data, raw = client().read_object(obj, b, i)
+        out.append((i, data, raw))
+    return out
+
+
+def _iter_bank(obj: ObjType, b: int, start: int, end: int):
+    for i, data, _ in _bank_raw(obj, b, start, end):
+        yield i, data
+
+
 @mcp.tool()
 def backup_bank(obj_type: str, bank: str) -> dict:
-    """Guarda un banco completo como fichero .syx (mensajes Object Dump 0x73 restaurables)."""
+    """Guarda un banco completo como fichero .syx (Object Dumps 0x73 + Store Bank 0x76, restaurable)."""
     obj, b = ObjType[obj_type.upper()], _bank(bank)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     path = BACKUP_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_{obj.name}_{_label(obj, b)}.syx"
-    n = 0
+    items = _bank_raw(obj, b)
     with path.open("wb") as fh:
-        for i in range(bank_size(obj, b)):
-            _, raw = client().read_object(obj, b, i)
+        for _, _, raw in items:
             fh.write(raw)
-            n += 1
-    return {"file": str(path.resolve()), "objects": n, "bytes": path.stat().st_size}
+    return {"file": str(path.resolve()), "objects": len(items), "bytes": path.stat().st_size}
 
 
 @mcp.tool()
@@ -237,9 +275,17 @@ def compare_with_factory(obj_type: str, bank: str, model: str = "KRONOS") -> dic
     ref = {(e["index"]): e for e in _factory().get(model, []) if e["type_code"] == int(obj) and e["bank"] == b}
     if not ref:
         return {"error": "Sin referencia de fábrica para ese tipo/banco (¿falta data/preload_index.json?)"}
+    fd = _factory_digests().get(model, {}).get(f"{int(obj):02X}:{b:02X}")
+    if fd:
+        try:
+            if client().bank_digest(obj, b) == fd["sha1"]:
+                return {"bank": _label(obj, b), "factory_identical": len(ref), "modified": [], "method": "digest SHA-1 (0x37)"}
+        except Exception:  # noqa: BLE001
+            pass
     same, changed = [], []
+    current = dict(_iter_bank(obj, b, 0, bank_size(obj, b)))
     for i in sorted(ref):
-        data, _ = client().read_object(obj, b, i)
+        data = current.get(i, b"")
         item = {"index": i, "current": _name(data) if obj in NAMED_TYPES else None, "factory": ref[i]["name"]}
         (same if hashlib.md5(data).hexdigest() == ref[i]["md5"] else changed).append(item)
     return {"bank": _label(obj, b), "factory_identical": len(same), "modified": changed}
@@ -291,15 +337,20 @@ def restore_syx(file: str, confirm: bool = False) -> dict:
     _require_write(confirm)
     raw = Path(file).read_bytes()
     sent = 0
+    banks: set[tuple[int, int]] = set()
     i = 0
     while (start := raw.find(b"\xF0", i)) != -1:
         end = raw.index(b"\xF7", start)
         msg = raw[start : end + 1]
         if len(msg) > 10 and msg[4] == Func.OBJECT_DUMP:
             client().send_raw(msg, Func.REPLY)
+            banks.add((msg[5], msg[6]))
             sent += 1
         i = end + 1
-    return {"objects_written": sent}
+    # la doc oficial: los 73 recibidos no se guardan hasta un Store Bank Request por banco
+    for t, b in sorted(banks):
+        client().store_bank(ObjType(t), b)
+    return {"objects_written": sent, "banks_stored": [f"{ObjType(t).name} {_label(t, b)}" for t, b in sorted(banks)]}
 
 
 @mcp.tool()
@@ -409,7 +460,19 @@ def diff_snapshots(snapshot_a: str, snapshot_b: str, max_runs: int = 64) -> dict
     """Compara dos fotos byte a byte: tramos cambiados con interpretaciones u8/s8/16/32 bits."""
     a, ia = KB.load_snapshot(snapshot_a)
     b, ib = KB.load_snapshot(snapshot_b)
-    return {"a": ia, "b": ib, **KB.diff(a, b, max_runs)}
+    res = {"a": ia, "b": ib, **KB.diff(a, b, max_runs)}
+    res["params_changed"] = _annotate(ia["obj_type"], a, b)
+    return res
+
+
+def _annotate(obj_name: str, a: bytes, b: bytes) -> list[dict]:
+    try:
+        obj = ObjType[obj_name]
+        if P.available() and (obj in P.MAP_FOR or obj == ObjType.PROGRAM):
+            return P.annotate_changes(obj, a, b)
+    except Exception as e:  # noqa: BLE001
+        return [{"error": str(e)}]
+    return []
 
 
 @mcp.tool()
@@ -431,6 +494,7 @@ def learn_finish(session: str, max_runs: int = 32) -> dict:
     a, _ = KB.load_snapshot(s["before"])
     b, _ = KB.load_snapshot(after["snapshot"])
     d = KB.diff(a, b, max_runs)
+    named = _annotate(s["obj"], a, b)
     unsolicited = MONITOR.since(s["seq"], only_unsolicited=True, limit=50)
     s.update(after=after["snapshot"], finished=True)
     hint = (
@@ -438,7 +502,9 @@ def learn_finish(session: str, max_runs: int = 32) -> dict:
         if d["changed_runs"] == 0
         else "Un tramo pequeño = candidato claro → learn_param. Muchos tramos = repetir con un cambio más aislado."
     )
-    return {"session": session, "description": s["description"], "diff": d, "kronos_sent": unsolicited, "hint": hint}
+    if named and not any("error" in n or "note" in n for n in named):
+        hint = "Parámetros identificados con el mapa oficial. Si coincide con lo que cambiaste, regístralo con note() (ya está en el mapa oficial; learn_param solo para lo que falte)."
+    return {"session": session, "description": s["description"], "params_changed": named, "diff": d, "kronos_sent": unsolicited, "hint": hint}
 
 
 @mcp.tool()
@@ -511,7 +577,110 @@ def descubrir_parametro(parametro: str, obj_type: str = "PROGRAM") -> str:
     )
 
 
+# --- Mapas oficiales y funciones de la doc Korg ---------------------------------------
+@mcp.tool()
+def system_status() -> dict:
+    """Estado del Kronos: identidad, modo, reloj MIDI, protección de memoria, performance activa y tipos de banco."""
+    c = client()
+    out: dict = {}
+    for key, fn in (("identity", c.identify), ("mode", c.mode_data), ("current_performance", c.current_performance), ("program_bank_types", c.program_bank_types)):
+        try:
+            out[key] = fn()
+        except Exception as e:  # noqa: BLE001
+            out[key] = {"error": str(e)}
+    return out
+
+
+@mcp.tool()
+def system_info(what: str = "pianos") -> list | dict:
+    """Inventario: 'pianos' (SGX instalados), 'samples' (bancos de multisamples ROM/EXs/usuario) o 'bank_types'."""
+    c = client()
+    if what == "pianos":
+        return c.piano_types()
+    if what == "samples":
+        return c.sample_banks()
+    if what == "bank_types":
+        return c.program_bank_types()
+    raise ValueError("what = pianos | samples | bank_types")
+
+
+@mcp.tool()
+def bank_status(model: str = "KRONOS") -> dict:
+    """Pide al Kronos los digests SHA-1 de TODOS los bancos (1 mensaje) y los compara con fábrica.
+    model: KRONOS (original/X) o NewKRONOS (Kronos 2). Ideal para auditar qué se ha modificado."""
+    fd = _factory_digests().get(model, {})
+    rows, counts = [], {"factory": 0, "modified": 0, "no_reference": 0}
+    for e in client().digest_collection():
+        key = f"{e['obj']:02X}:{e['bank']:02X}"
+        try:
+            oname = ObjType(e["obj"]).name
+        except ValueError:
+            oname = f"0x{e['obj']:02X}"
+        ref = fd.get(key)
+        state = "no_reference" if not ref else ("factory" if ref["sha1"] == e["sha1"] else "modified")
+        counts[state] += 1
+        rows.append({"type": oname, "bank": _label(e["obj"], e["bank"]), "state": state})
+    return {"summary": counts, "modified": [r for r in rows if r["state"] == "modified"], "all": rows}
+
+
+@mcp.tool()
+def decode_object(obj_type: str = "PROGRAM", bank: str | None = None, index: int | None = None,
+                  query: str | None = None, limit: int = 150) -> dict:
+    """Interpreta un objeto con el mapa oficial (nombres reales, efectos y motor EXi incluidos).
+    Sin bank/index usa el buffer de edición. query filtra por texto (p. ej. 'Filter', 'Insert Effect1', 'LFO')."""
+    obj = ObjType[obj_type.upper()]
+    data, meta = _read(obj, bank, index)
+    return {**meta, **_summary(obj, data), "size": len(data), "params": P.decode(obj, data, query, limit)}
+
+
+@mcp.tool()
+def find_parameter(text: str, scope: str | None = None, limit: int = 30) -> list[dict]:
+    """Busca parámetros por nombre en los mapas oficiales → offset y Parameter ID (TYP,SOC,SUB,PID,IDX).
+    scope: program_hd1, program_exi, combination, global, set_list, song_control, drum_kit, wave_seq."""
+    return P.find(text, [scope] if scope else None, limit)
+
+
+@mcp.tool()
+def set_parameter(value: int, param: str | None = None, param_id: str | None = None,
+                  obj_type: str = "PROGRAM", confirm: bool = False) -> dict:
+    """Cambia un parámetro EN EL BUFFER DE EDICIÓN con Parameter Change (0x43). No guarda en memoria:
+    el sonido vuelve a su estado al cambiar de Program/Combi salvo que el usuario haga Write.
+    param: nombre (se busca en el mapa del objeto actual) · param_id: 'TYP,SOC,SUB,PID,IDX'."""
+    if not confirm:
+        raise PermissionError("Modifica el sonido actual: repite con confirm=true.")
+    obj = ObjType[obj_type.upper()]
+    c = client()
+    before = c.read_current_object(obj)
+    map_name = P.map_name(obj, len(before))
+    target = None
+    if param_id:
+        ids = [int(x) for x in param_id.split(",")]
+    else:
+        # solo campos con Parameter ID completo: los de Effect.txt traen únicamente PID (TYP/SOC dependen del slot y
+        # la doc no los da: se aprenden viendo el 0x43 que emite el Kronos al mover el parámetro)
+        cands = [(f, base, lab) for f, base, lab in P.iter_fields(obj, before)
+                 if "TYP" in f.get("id", {}) and param and param.lower() in lab.lower()]
+        exact = [x for x in cands if x[2].lower() == param.lower()]
+        cands = exact or cands
+        if len(cands) != 1:
+            return {"error": "ambiguo o no encontrado", "candidates": [x[2] for x in cands[:25]], "map": map_name}
+        target = cands[0]
+        i = target[0]["id"]
+        ids = [int(i.get(k, 0)) for k in ("TYP", "SOC", "SUB", "PID", "IDX")]
+    c.set_parameter(*ids, value)
+    after = c.read_current_object(obj)
+    return {"sent_id": ",".join(map(str, ids)), "value": value, "map": map_name,
+            "verified_changes": P.annotate_changes(obj, before, after)}
+
+
 # --- Recursos ------------------------------------------------------------------
+@mcp.resource("kronos://reference/official-sysex")
+def official_sysex() -> str:
+    """Especificación oficial de Korg: KRONOS_MIDI_SysEx.txt (v1.26)."""
+    p = PROJECT_DIR / "docs" / "korg_oficial" / "KRONOS_MIDI_SysEx.txt"
+    return p.read_text(encoding="latin-1") if p.exists() else "No encontrada"
+
+
 @mcp.resource("kronos://knowledge")
 def knowledge_resource() -> str:
     """Mapa de parámetros aprendido y notas."""

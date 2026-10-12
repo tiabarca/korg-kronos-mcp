@@ -42,6 +42,20 @@ def describe(raw: bytes) -> dict:
                 d["code"] = f"{data[0]:02X}"
             elif msg.func in (Func.MODE_DATA, Func.MODE_CHANGE) and data:
                 d["mode"] = data[0] & 0x0F
+            elif msg.func in (Func.PARAM_CHANGE_INT, Func.SEQ_PARAM_CHANGE, Func.KARMA_PARAM_CHANGE, Func.DRUM_TRACK_PARAM_CHANGE):
+                from .params import decode_param_change
+
+                pc = decode_param_change(data)
+                if pc:
+                    d["param"] = pc
+            elif msg.func == Func.CURR_PERF_ID and len(data) >= 4:
+                d["performance"] = {"type": {0: "combi", 1: "program", 2: "song"}.get(data[0], data[0]), "bank": data[1], "number": data[2] << 7 | data[3]}
+            elif msg.func == Func.BANK_DIGEST and len(data) >= 2:
+                d.update(obj=_obj(data[0]), bank=f"{data[1]:02X}", note="banco modificado en el teclado (escritura/PCG)")
+            elif msg.func == Func.EDIT_IN_CONTEXT_NOTIFY and len(data) >= 4:
+                d["edit_in_context"] = {"enter": bool(data[0]), "edit_mode": data[1] & 0x0F, "context_mode": data[2] & 0x0F, "data": data[3]}
+            elif msg.func == Func.STORE_BANK_REQ and len(data) >= 2:
+                d["bank"] = f"{data[1]:02X}"
         except Exception:  # noqa: BLE001 - describir nunca debe romper
             pass
         if len(data) <= 32:

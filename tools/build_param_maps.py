@@ -193,7 +193,8 @@ def _finish(f: dict) -> dict:
     if m:
         lo, hi = int(m.group(1), 16), int(m.group(2), 16)
         v = f.get("value", "").strip()
-        if width <= 32 and lo >> (width - 1) & 1 and not hi >> (width - 1) & 1 and not re.match(r"\d", v):
+        hw = 4 * len(m.group(1))  # ancho según los dígitos hex del documento
+        if width <= 32 and lo >> (hw - 1) & 1 and not hi >> (hw - 1) & 1 and not re.match(r"\d", v):
             out["signed"] = True
     m2 = re.search(r"\((\d+) ascii", f.get("name", ""))
     if m2:

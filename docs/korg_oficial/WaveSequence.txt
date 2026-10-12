@@ -1,0 +1,86 @@
+Wave Seq Size: 2216 byte
+Object Version: 1
++======+=====+===============================+============================================+==============+====================+===+===+
+| OFS  | bit | parameter                     | parameter                                  | data(hex)    | value              |IDX|PID|
++======+=====+===============================+============================================+==============+====================+===+===+
+|    0 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    1 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    2 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    3 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    4 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    5 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    6 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    7 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    8 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|    9 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   10 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   11 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   12 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   13 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   14 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   15 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   16 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   17 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   18 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   19 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   20 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   21 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   22 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
+|   23 |     | Common                        | Name                                       | 00~FF        |  ~                 |   |   |
++======+=====+===============================+============================================+==============+====================+===+===+
+|   24 | 0   | Common                        | Run Sequence                               | 00~01        | Stop,Run           |  0|  0|
+|      | 1   | Common                        | Time/Tempo Mode                            | 00~01        | Time,Tempo         |  0|  2|
+|      | 2   | Common                        | Note-On Advance                            | 00~01        | Off~On             |  0|  1|
+|   25 |     | Common                        | Swing Resolution                           | 00~06        |                    |  0|  3|
+|   26 |     | Common                        | End Step                                   | 00~3F        | 0~63               |  0|  5|
+|   27 |     | Common                        | Start Step                                 | 00~3F        | 0~63               |  0|  4|
+|   28 |     | Common                        | Start Step AMS Source                      | 00~4C        | 0~76               |  0|  6|
+|   29 |     | Common                        | Start Step AMS Intensity                   | C1~3F        | -63~+63            |  0|  7|
+|   30 |     | Common                        | Position AMS Source                        | 00~4C        | 0~76               |  0| 10|
+|   31 |     | Common                        | Position AMS Intensity                     | C1~3F        | -63~+63            |  0| 11|
+|   32 |     | Common                        | Duration AMS Source                        | 00~4C        | 0~76               |  0|  8|
+|   33 |     | *                             | *                                          | *            | *                  |   |   |
+|   34 |     | Common                        | Duration AMS Intensity                     | 001~190      | 1~400[%]           |  0|  9|
+|   35 |     |                               |                                            |              |                    |   |   |
+|   36 |     | Common                        | Loop Start                                 | 00~3F        | 0~63               |  0| 12|
+|   37 |     | Common                        | Loop End                                   | 00~3F        | 0~63               |  0| 13|
+|   38 |     | Common                        | Loop Direction                             | 00~02        | Forward,Backward,  |  0| 15|
+|      |     |                               |                                            |              | Alternative        |   |   |
+|   39 |     | Common                        | Loop Repeat                                | 00~80        | 0~128              |  0| 14|
++======+=====+===============================+============================================+==============+====================+===+===+
+|   40 | 1~0 | Step1                         | Step Type                                  | 00~02        | Multisample,Rest,  |  0| 16|
+|      |     |                               |                                            |              | Tie                |   |   |
+|   41 |     | Step1                         | Bank Select UUID                           |              | UUID               |  0| 33| use binary param change (function 0x56)
+|    | |     |                               |                                            |              |                    |   |   |
+|   56 |     |                               |                                            |              |                    |   |   |
+|   57 |     | *                             | *                                          | *            | *                  |   |   |
+|   58 |     | Step1                         | Multisample Select                         | 0000~3FFE    | 0~16382            |  0| 18|
+|   59 |     |                               |                                            |              |                    |   |   |
+|   60 |     | Step1                         | Level                                      | 00~7F        | 0~127              |  0| 19|
+|   61 | 3~0 | Step1                         | Start Offset                               | 00~08        | Off~8th            |  0| 23|
+|      | 7   | Step1                         | Reverse                                    | 00~01        | Off~On             |  0| 22|
+|   62 |     | Step1                         | Tune                                       | FB50~04B0    | -1200~+1200        |  0| 20|
+|   63 |     |                               |                                            |              |                    |   |   |
+|   64 |     | Step1                         | Transpose                                  | E8~18        | -24~+24            |  0| 21|
+|   65 |     | Step1                         | AMS1 Output                                | 00~7F        | 0~127              |  0| 24|
+|   66 |     | Step1                         | AMS2 Output                                | 00~7F        | 0~127              |  0| 25|
+|   67 |     | Step1                         | Duration                                   | 00~92        | 0~146              |  0| 26|
+|   68 |     | *                             | *                                          | *            | *                  |   |   |
+|   69 |     | Step1                         | Tempo Base Note                            | 00~0A        | 0~10               |  0| 27|
+|   70 |     | Step1                         | Tempo Multiplier                           | 01~20        | x1~x32             |  0| 28|
+|   71 |     | Step1                         | Crossfade                                  | 00~91        | 0~145              |  0| 29|
+|   72 |     | Step1                         | Fade-In Shape                              | 80~7F        | -128~+127          |  0| 31|
+|   73 |     | Step1                         | Fade-Out Shape                             | 80~7F        | -128~+127          |  0| 30|
++======+=====+===============================+============================================+==============+====================+===+===+
+|   74 | 1~0 | Step2                         | Step Type                                  | 00~02        | Multisample,Rest,  |  1| 16|
+|      |     |                               |                                            |              | Tie                |   |   |
+|   ...                                                                                                                               |
+|  107 |     | Step2                         | Fade-Out Shape                             | 80~7F        | -128~+127          |  1| 30|
++======+=====+===============================+============================================+==============+====================+===+===+
+| ...                                                                                                                                 |
++======+=====+===============================+============================================+==============+====================+===+===+
+| 2182 | 1~0 | Step64                        | Step Type                                  | 00~02        | Multisample,Rest,  | 63| 16|
+|      |     |                               |                                            |              | Tie                |   |   |
+|   ...                                                                                                                               |
+| 2215 |     | Step64                        | Fade-Out Shape                             | 80~7F        | -128~+127          | 63| 30|
++======+=====+===============================+============================================+==============+====================+===+===+

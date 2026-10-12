@@ -2,6 +2,7 @@
 
 Fuente: docs/sysex/kronos_sysex_referencia.md (basado en kronut + doc oficial Korg).
 """
+import re
 from enum import IntEnum
 
 SYSEX_START = 0xF0
@@ -13,6 +14,7 @@ CHANNEL_BASE = 0x30  # 0x30 + canal global (0..15)
 
 class Func(IntEnum):
     MODE_REQUEST = 0x12
+    EDIT_IN_CONTEXT_NOTIFY = 0x48
     SONG_SELECT = 0x13
     REPLY = 0x24
     CURR_SAMPLE_INFO_REQ = 0x30
@@ -158,10 +160,16 @@ DRUM_TRACK_PATTERNS = 1000
 
 
 def bank_code(name: str) -> int:
-    """'INT-A'..'INT-G' → 0x00..0x06 · 'USER-A'..'USER-G' → 0x40..0x46 · 'USER-AA'..'USER-GG' → 0x47..0x4D."""
+    """'INT-A'..'INT-G' → 0x00..0x06 · 'USER-A'..'USER-G' → 0x40..0x46 · 'USER-AA'..'USER-GG' → 0x47..0x4D
+    · 'GM' → 0x10 · 'g(1)'..'g(9)' → 0x11..0x19 · 'g(d)' → 0x1A (solo lectura, doc oficial *2)."""
     n = name.upper().replace("_", "-").replace(" ", "")
     if n in ("INT", "I"):
         return 0x00
+    if n == "GM":
+        return 0x10
+    gm = re.fullmatch(r"G\((\d|D)\)", n)
+    if gm:
+        return 0x1A if gm.group(1) == "D" else 0x10 + int(gm.group(1))
     pre, _, suf = n.partition("-")
     if pre in ("INT", "I") and len(suf) == 1:
         return "ABCDEFG".index(suf)
@@ -174,6 +182,12 @@ def bank_code(name: str) -> int:
 
 
 def bank_label(code: int) -> str:
+    if code == 0x10:
+        return "GM"
+    if 0x11 <= code <= 0x19:
+        return f"g({code - 0x10})"
+    if code == 0x1A:
+        return "g(d)"
     if code < 0x40:
         return f"INT-{'ABCDEFGHIJKL'[code]}" if code < 12 else f"INT-{code:02X}"
     if code <= 0x46:

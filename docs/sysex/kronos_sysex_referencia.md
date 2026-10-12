@@ -2,7 +2,40 @@
 
 Documento de contexto para el proyecto **korg kronos mcp server**. Recopilado el 2026-10-11.
 
-> **Fiabilidad.** Lo marcado ✅ está verificado en código que funciona contra un Kronos real (kronut) o en mensajes probados por usuarios. Lo marcado ⚠️ es inferido o pendiente de confirmar con la documentación oficial de Korg (ver §9).
+> **Fuente principal (desde 2026-10-12):** documentación oficial de Korg en `docs/korg_oficial/`, que es la que manda:
+> - `KRONOS_MIDI_SysEx.txt`: especificación SysEx v1.26 de agosto de 2014.
+> - Mapas de parámetros de cada objeto: `Prog_*.txt`, `CombiAndSongTimbreSet.txt`, `Global.txt`, `Effect.txt`, etc.
+>
+> Este documento es un resumen. Lo marcado 🔌 se ha capturado de un Kronos real.
+
+## 0. Novedades de la doc oficial respecto a lo que teníamos
+
+| Tema | Corrección / dato nuevo |
+|---|---|
+| **73 Object Dump recibido** | **No se guarda** hasta un `76 Store Bank Request` de ese banco (se pueden mandar varios objetos y un solo 76). Restaurar = 73… + 76. |
+| **75 Current Object Dump** | Reemplaza el buffer de edición; no se guarda hasta que el usuario hace Write en el teclado. |
+| **77 Dump Bank Request** | `77 obj bank` → el Kronos envía el banco entero como 73. Lo usa `backup_bank`. |
+| **37/38 Bank Digest** | SHA-1 de 20 bytes del banco (objetos 8-bit concatenados). El Kronos lo **emite solo** cuando un banco cambia por cualquier vía que no sea SysEx (Write, cargar PCG…). |
+| **39/3A Digest Collection** | Todos los digests en un mensaje → `bank_status` audita el teclado entero contra fábrica. |
+| **42 Mode Data** | 5 bytes: modo, opción, setup1 (Note Receive, MIDI Clock), setup2/3 = **protección de memoria** por tipo. |
+| **43 Parameter Change** | `43 TYP SOC SUB PID IDX vH vM vL`, valor de 21 bits en complemento a 2. TYP/SOC/SUB/PID/IDX vienen en cada fila de los mapas. Solo responde (24) si hay error. |
+| **71 Set Current Object** | `71 kind idH idL`, kind 0 = drum kit, 1 = wave seq, índice **lineal** (no banco + id). |
+| **48 Edit In Context Notify** | Nueva (1.25): avisa al entrar/salir de editar un Program dentro de una Combi/Song. |
+| **32/33 Current Performance Id** | Program/Combi/Song activo (en Set List da el contenido del slot). |
+| **60/61 Program Bank Types** | Bitmap EXi/HD-1 de buffer de edición + todos los bancos de Program. |
+| **7C Change Program Bank Type** | `7C bank type` (0 HD-1, 1 EXi): **reformatea y borra el banco** si cambia el tipo. ⚠️ destructivo. |
+| **30/31, 34/35** | Inventario de bancos de multisamples (ROM/EXs/usuario) y de pianos SGX. |
+| **Bancos de solo lectura** | Program GM `10`, g(1)–g(9) `11–19`, g(d) `1A`; Drum Kit GM `10`. KARMA GE bancos `00–0B` = USER-A–L. |
+| **Códigos 64/65/66 de Reply** | Son **decimales** = 0x40/0x41/0x42 (lo que ya usábamos). |
+
+### Validación de los mapas contra el preload de fábrica (7 278 objetos)
+- Endianness multibyte: **little-endian**. El 97,6 % de los valores cae en rango, frente al 79,8 % leyendo en big-endian.
+- Campos de bits que cruzan bytes: el **primer trozo aporta los bits bajos**.
+- Porcentaje de valores dentro del rango oficial:
+  - Efectos, Set List, Drum Kit, Wave Seq: 100 %
+  - Motores EXi: 99,8 %
+  - Combi: 99,98 %
+  - Program: 98,7 %. Lo que queda fuera son rangos KARMA que dependen del módulo GE.
 
 ---
 
@@ -21,7 +54,7 @@ F0 42 3g 68 ff [datos...] F7
 - El filtro **Global P1 → MIDI Filter → Exclusive** debe estar activado para que el Kronos transmita/reciba SysEx.
 - Además de los mensajes Korg, el Kronos acepta Universal SysEx: Inquiry (identidad), GM System On, Master Volume, Master Balance, Master Fine Tune y Master Coarse Tune.
 
-### Identificación del dispositivo (Universal) ✅ capturado de un Kronos real (2026-10-12)
+### Identificación del dispositivo (Universal) 🔌 capturado de un Kronos real (2026-10-12)
 - Petición: `F0 7E 7F 06 01 F7`
 - Respuesta real: `F0 7E 00 06 02 42 68 00 0E 00 03 01 03 00 F7`
   - `00` = canal global 1 · `42` = Korg
@@ -225,22 +258,11 @@ INT-A…F: `B0 00 00` + `B0 20 00…05` · I-G (GM): `B0 00 79` · USER-A…G: `
 
 ---
 
-## 9. Fuentes y documentación oficial pendiente
+## 9. Fuentes
 
-**Documentación oficial de Korg** (contiene los `.txt` de definición de parámetros: Global.txt, Prog_EXi.txt, SetList.txt, etc. — imprescindibles para `43/44` y para interpretar dumps de Program/Combi/Global):
-- KRONOS SysEx documentation 2.1 (Kronos / Kronos X, sistema 2.1): enlazada desde shop.korg.com/kronos/support.aspx → `KRONOS_SysEx_2_1.zip`.
-- KRONOS SysEx documentation 2.0.
-- KRONOS MIDI Implementation (zip) en korg.com, sección de descargas del Kronos.
-
-No se pudieron descargar desde el entorno de trabajo (dominio bloqueado). **Siguiente paso: descargar `KRONOS_SysEx_2_1.zip` y subir su contenido al proyecto.**
-
-Ten en cuenta que la doc SysEx es de la versión 2.1 y el sistema actual es 3.x: puede haber parámetros nuevos (SGX-2, efectos vintage, Set List 3.x) no documentados.
-
-**Fuentes usadas:**
-- KRONOS Editor 3.1 (Sound Quest), preload SysEx `KRONOS_Preload.SQS`: ver `docs/ingenieria_inversa.md`.
-- kronut (editor de Set Lists para Kronos, C++/RtMidi): https://github.com/jimm/kronut — commit d8c8650 (2026-05-13), ficheros `src/consts.h`, `src/kronos.cpp`, `src/midi_data.cpp`, `src/set_list.h`, `src/slot.h`.
+- **Korg, documentación oficial** (`docs/korg_oficial/`, aportada por el usuario el 2026-10-12): `KRONOS_MIDI_SysEx.txt` v1.26, `KRONOS_MIDI_Implementation.pdf` y los mapas de parámetros de cada objeto.
+  - Convertidos a JSON con `tools/build_param_maps.py`, que genera `data/params/`.
+- KRONOS Editor 3.1 (Sound Quest), preload SysEx `KRONOS_Preload.SQS`: ver `docs/ingenieria_inversa.md`. Se usa para validar los mapas y para los digests de fábrica (`data/factory_digests.json`).
+- kronut (editor de Set Lists para Kronos, C++/RtMidi): https://github.com/jimm/kronut
 - Korg Kronos support (descargas, doc SysEx): https://shop.korg.com/kronos/support.aspx
-- Korg JP, descargas Kronos (2011) / Kronos X: https://www.korg.com/jp/support/download/product/0/84
-- Korg US, descargas Kronos: https://www.korg.com/us/support/download/product/0/988/
 - Tabla de implementación MIDI (Universal SysEx soportados, filtros): https://manualslib.mx/manual/7923/Korg-Kronos.html?page=297
-- Mensajes de cambio de modo probados: https://zubersoft.com/mobilesheets/forum/thread-9582.html y https://www.zubersoft.com/mobilesheets/forum/showthread.php?tid=7845

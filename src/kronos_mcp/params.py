@@ -97,8 +97,9 @@ def data_range(f: dict) -> tuple[int, int] | None:
         return (v, v)
     lo, hi = int(m.group(1), 16), int(m.group(2), 16)
     if f.get("signed"):
-        bits = f.get("bits", 8)
-        lo = lo - (1 << bits) if lo >> (bits - 1) & 1 else lo
+        # Korg escribe el rango con el ancho de sus dígitos hex (p. ej. E2~1E en un campo de 6 bits)
+        width = 4 * len(m.group(1))
+        lo = lo - (1 << width) if lo >> (width - 1) & 1 else lo
     return (lo, hi) if lo <= hi else (hi, lo)
 
 
@@ -106,12 +107,15 @@ def _pid(f: dict) -> str | None:
     i = f.get("id")
     if not i:
         return None
+    if set(i) == {"PID"}:  # parámetros de efecto: solo PID relativo al slot
+        return f"pid={i['PID']}"
     return ",".join(i.get(k, "") for k in ("TYP", "SOC", "SUB", "PID", "IDX") if k in i) or None
 
 
 def _label(f: dict, group: str | None = None) -> str:
     g = group if group is not None else f.get("group", "")
-    return f"{g} / {f['name']}".strip(" /") if g else f["name"]
+    n = f.get("name") or f"(sin nombre @{f['ofs']})"
+    return f"{g} / {n}".strip(" /") if g else n
 
 
 # --- decodificación completa ------------------------------------------------------------
@@ -199,8 +203,8 @@ def find(text: str, maps: list[str] | None = None, limit: int = 40) -> list[dict
                     return out
     for e_id, e in load("effects").items():
         for f in e["fields"]:
-            if t in f["name"].lower():
-                out.append({"map": "effects", "effect": f"{e_id}:{e['name']}", "param": f["name"], "rel_ofs": f["ofs"], "pid": f.get("id", {}).get("PID"), "range": f.get("value")})
+            if t in f.get("name", "").lower():
+                out.append({"map": "effects", "effect": f"{e_id}:{e['name']}", "param": f.get("name", ""), "rel_ofs": f["ofs"], "pid": f.get("id", {}).get("PID"), "range": f.get("value")})
                 if len(out) >= limit:
                     return out
     return out
@@ -238,3 +242,38 @@ def decode_param_change(payload: bytes) -> dict | None:
 def encode_value(value: int) -> tuple[int, int, int]:
     v = value & ((1 << 21) - 1)
     return (v >> 14) & 0x7F, (v >> 7) & 0x7F, v & 0x7F
+
+
+def _field_bytes(f: dict, base: int) -> range | set:
+    if "chunks" in f:
+        return {c[0] + base for c in f["chunks"]}
+    return range(f["ofs"] + base, f["ofs"] + base + f.get("size", 1))
+
+
+def annotate_changes(obj: ObjType, before: bytes, after: bytes, max_items: int = 60) -> list[dict]:
+    """Qué parámetros (con nombre oficial) cambian entre dos versiones de un objeto."""
+    if len(before) != len(after):
+        return [{"note": f"tamaños distintos ({len(before)} → {len(after)}): ¿cambió el motor EXi/HD-1?"}]
+    changed = {i for i in range(len(after)) if before[i] != after[i]}
+    if not changed:
+        return []
+    out, seen = [], set()
+    for f, base, label in iter_fields(obj, after):
+        fb = _field_bytes(f, base)
+        if changed.isdisjoint(fb):
+            continue
+        old, new = read(before, f, base), read(after, f, base)
+        if old == new or label in seen:
+            continue
+        seen.add(label)
+        item = {"param": label, "old": old, "new": new, "ofs": f["ofs"] + base}
+        if "chunks" in f:
+            item["bits"] = f["chunks"]
+        if f.get("value"):
+            item["range"] = f["value"]
+        if (pid := _pid(f)) is not None:
+            item["id"] = pid
+        out.append(item)
+        if len(out) >= max_items:
+            break
+    return out

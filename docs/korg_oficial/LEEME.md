@@ -1,9 +1,12 @@
-# Documentación oficial Korg
+# Documentación oficial Korg (MIDI Implementation)
 
-Copia aquí el contenido de `KRONOS_SysEx_2_1.zip` (y si lo tienes, el zip de MIDI Implementation).
+Aportada el 2026-10-12. Es la fuente de verdad del proyecto.
 
-Ficheros clave esperados: `Global.txt`, `Prog_EXi_Common.txt`, `Prog_EXi.txt`, `Prog_HD-1.txt`,
-`CombiAndSongTimbreSet.txt`, `DrumKit.txt`, `WaveSequence.txt`, `SetList.txt`, `Song.txt`,
-`SongControl.txt`, `KARMA_GE_RTP.txt`, `DrumTrackPattern.txt`, `DrumTrackPatternEvent.txt`.
+- `KRONOS_MIDI_SysEx.txt`: especificación de todos los mensajes SysEx (v1.26, ago-2014).
+- `KRONOS_MIDI_Implementation.pdf`: tabla de implementación MIDI.
+- Mapas de parámetros (OFS, bits, rango, Parameter ID TYP/SOC/SUB/PID/IDX):
+  - `Prog_EXi_Common.txt`, `Prog_EXi.txt` (motores), `Prog_HD-1.txt`
+  - `CombiAndSongTimbreSet.txt`, `Global.txt`, `Effect.txt`, `SetList.txt`, `DrumKit.txt`, `WaveSequence.txt`
+  - `SongControl.txt`, `Song.txt`, `DrumTrackPattern.txt`, `SongEvent.txt`, `KARMA_GE_RTP.txt`
 
-Descarga: https://shop.korg.com/kronos/support.aspx → "MIDI System Exclusive Documentation".
+Para regenerar los mapas JSON que usa el MCP: `python tools/build_param_maps.py` (escribe en `data/params/`).

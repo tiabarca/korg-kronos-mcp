@@ -1,0 +1,29 @@
+Object Version: 0
+
+/*///////////////////////////////////////////////////////////////////////////
+// CGERTParmInfo class
+///////////////////////////////////////////////////////////////////////////*/
+class CGERTParmInfo {
+public:
+	enum EConst {
+		cstSizeOfGERTParmName	= 48
+	};
+	char	m_acName[cstSizeOfGERTParmName];	// Name
+
+	short	m_sLimitMin;	//	Min
+	short	m_sLimitMax;	//	Max
+
+	short	m_sMinValue;	//	Default min value
+	short	m_sMaxValue;	//	Default max value
+	short	m_sValue;		//	Default value
+	short	m_sAssign;		//	Default assign
+};
+
+/*///////////////////////////////////////////////////////////////////////////
+// CKarmaGEInfo class
+///////////////////////////////////////////////////////////////////////////*/
+class CKarmaGEInfo {
+public:
+	char			m_acName[32];
+	CGERTParmInfo	m_aoGERTParm[32];
+};
