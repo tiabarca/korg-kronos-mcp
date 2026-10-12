@@ -1,0 +1,64 @@
+{
+ "PROGRAM_EXI": {
+  "fields": 2014,
+  "with_param_id": 1990,
+  "effect_blocks": 16,
+  "exi_blocks": 2
+ },
+ "PROGRAM_HD1": {
+  "fields": 2522,
+  "with_param_id": 2500,
+  "effect_blocks": 16,
+  "exi_blocks": 0
+ },
+ "COMBINATION": {
+  "fields": 6681,
+  "with_param_id": 6675,
+  "effect_blocks": 16,
+  "exi_blocks": 0
+ },
+ "GLOBAL": {
+  "fields": 12542,
+  "with_param_id": 8931,
+  "effect_blocks": 0,
+  "exi_blocks": 0
+ },
+ "SONG_CONTROL": {
+  "fields": 1950,
+  "with_param_id": 322,
+  "effect_blocks": 0,
+  "exi_blocks": 0
+ },
+ "DRUM_KIT": {
+  "fields": 21377,
+  "with_param_id": 21376,
+  "effect_blocks": 0,
+  "exi_blocks": 0
+ },
+ "WAVE_SEQ": {
+  "fields": 1041,
+  "with_param_id": 1040,
+  "effect_blocks": 0,
+  "exi_blocks": 0
+ },
+ "SET_LIST": {
+  "fields": 1682,
+  "with_param_id": 1037,
+  "effect_blocks": 0,
+  "exi_blocks": 0
+ },
+ "EFFECTS": {
+  "types": 197,
+  "fields": 4197
+ },
+ "EXI_ENGINES": {
+  "2": 609,
+  "3": 151,
+  "4": 707,
+  "5": 512,
+  "6": 322,
+  "7": 1108,
+  "8": 23,
+  "9": 183
+ }
+}
