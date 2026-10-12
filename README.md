@@ -45,7 +45,7 @@ Requisitos: Python 3.11 o superior, el **KORG USB-MIDI Driver** y el Kronos cone
 git clone <url-del-repo> C:\dev\kronos
 cd C:\dev\kronos
 python -m venv .venv
-.venv\Scriptsctivate
+.venv\Scripts\activate
 pip install -e .[dev]       # instala también el comando kronos-mcp en .venv\Scripts
 pytest                      # tests contra el Kronos simulado (test_live.py necesita teclado y se omite)
 ```
@@ -54,7 +54,7 @@ Comprobaciones:
 
 ```powershell
 $env:KRONOS_MOCK = "1"; kronos-mcp      # arranca el server sin teclado (Ctrl+C para salir)
-toolsun_checks.bat                    # con el Kronos: pruebas de solo lectura -> logs\checks_*.json
+tools\run_checks.bat                    # con el Kronos: pruebas de solo lectura -> logs\checks_*.json
 ```
 
 Los datos personales (`backups/`, `*.syx`, `data/catalog.*`, `data/knowledge/params.json`, `logs/`) no se versionan.
