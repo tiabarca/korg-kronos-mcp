@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "korg-kronos": {
+      "command": "C:\\dev\\kronos\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "kronos_mcp"],
+      "cwd": "C:\\dev\\kronos",
+      "env": {
+        "KRONOS_CHANNEL": "1",
+        "KRONOS_ALLOW_WRITE": "0",
+        "KRONOS_BACKUP_DIR": "C:\\dev\\kronos\\backups"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "korg-kronos": {
+      "type": "stdio",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "kronos_mcp"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "KRONOS_CHANNEL": "1",
+        "KRONOS_ALLOW_WRITE": "0",
+        "KRONOS_MOCK": "0"
+      }
+    }
+  }
+}

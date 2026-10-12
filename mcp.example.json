@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "korg-kronos": {
+      "command": ".venv\\Scripts\\python.exe",
+      "args": ["-m", "kronos_mcp"],
+      "env": {
+        "KRONOS_CHANNEL": "1",
+        "KRONOS_ALLOW_WRITE": "0"
+      }
+    }
+  }
+}
