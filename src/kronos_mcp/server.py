@@ -70,7 +70,8 @@ _learn_sessions: dict[str, dict] = {}
 SAFE_REQUESTS = {0x12, 0x30, 0x32, 0x34, 0x37, 0x39, 0x60, 0x72, 0x74, 0x77, 0x79}
 
 ALLOW_WRITE = os.getenv("KRONOS_ALLOW_WRITE") == "1"
-BACKUP_DIR = Path(os.getenv("KRONOS_BACKUP_DIR", "backups"))
+# rutas absolutas: el cliente MCP puede arrancar el server desde cualquier carpeta
+BACKUP_DIR = Path(os.getenv("KRONOS_BACKUP_DIR", PROJECT_DIR / "backups"))
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 NAMED_TYPES = {ObjType.PROGRAM, ObjType.COMBINATION, ObjType.DRUM_KIT, ObjType.WAVE_SEQ, ObjType.KARMA_GE, ObjType.SET_LIST, ObjType.SONG_TIMBRE_SET}
 
@@ -671,6 +672,119 @@ def set_parameter(value: int, param: str | None = None, param_id: str | None = N
     after = c.read_current_object(obj)
     return {"sent_id": ",".join(map(str, ids)), "value": value, "map": map_name,
             "verified_changes": P.annotate_changes(obj, before, after)}
+
+
+# --- Backup completo y foto de referencia ---------------------------------------------
+# (tipo, bancos) a respaldar. Los bancos GM/g(n) son de solo lectura y no se incluyen.
+_USER = [0x40 + i for i in range(14)]  # USER-A..G, USER-AA..GG
+BACKUP_PLAN: dict[str, list[tuple[ObjType, int]]] = {
+    "programs": [(ObjType.PROGRAM, b) for b in list(range(6)) + _USER],
+    "combis": [(ObjType.COMBINATION, b) for b in list(range(7)) + _USER[:7]],
+    "drumkits": [(ObjType.DRUM_KIT, b) for b in [0] + _USER],
+    "waveseqs": [(ObjType.WAVE_SEQ, b) for b in [0] + _USER],
+    "setlists": [(ObjType.SET_LIST, 0)],
+    "songs": [(ObjType.SONG_TIMBRE_SET, 0), (ObjType.SONG_CONTROL, 0)],
+    "drumtrack": [(ObjType.DRUM_TRACK_PATTERN, 0)],
+    "karma": [(ObjType.KARMA_GE, b) for b in range(12)],
+}
+BASELINE = KB.root / "baseline_digests.json"
+
+
+def _digests() -> dict[str, str]:
+    return {f"{e['obj']:02X}:{e['bank']:02X}": e["sha1"] for e in client().digest_collection()}
+
+
+@mcp.tool()
+def backup_all(groups: str = "all", folder: str | None = None) -> dict:
+    """Backup completo del Kronos en backups/full_<fecha>/ (un .syx restaurable por banco + Global + manifiesto).
+    Verifica cada banco contra el digest SHA-1 del propio Kronos y guarda esos digests como foto de referencia.
+    groups: 'all' o lista separada por comas de: programs, combis, drumkits, waveseqs, setlists, songs, drumtrack, karma.
+    folder: para continuar un backup a medias en la misma carpeta (las llamadas largas se pueden partir por grupos)."""
+    import hashlib as _h
+    import time as _t
+
+    sel = list(BACKUP_PLAN) if groups == "all" else [g.strip() for g in groups.split(",")]
+    out_dir = Path(folder) if folder else BACKUP_DIR / f"full_{datetime.now():%Y%m%d_%H%M%S}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    man_path = out_dir / "manifest.json"
+    manifest = json.loads(man_path.read_text(encoding="utf-8")) if man_path.exists() else {"created": datetime.now().isoformat(timespec="seconds"), "banks": {}}
+    t0 = _t.time()
+    try:
+        dev = _digests()
+        manifest["device_digests"] = dev
+    except Exception as e:  # noqa: BLE001
+        dev = manifest.get("device_digests", {})
+        manifest["digest_error"] = str(e)
+    if "identity" not in manifest:
+        try:
+            manifest["identity"] = client().identify()
+        except Exception:  # noqa: BLE001
+            pass
+    for g in sel:
+        for obj, b in BACKUP_PLAN[g]:
+            key = f"{int(obj):02X}:{b:02X}"
+            name = f"{obj.name}_{_label(obj, b)}"
+            try:
+                items = _bank_raw(obj, b)
+                (out_dir / f"{name}.syx").write_bytes(b"".join(raw for _, _, raw in items))
+                sha = _h.sha1(b"".join(data for _, data, _ in items)).hexdigest()
+                manifest["banks"][key] = {"file": f"{name}.syx", "objects": len(items), "sha1": sha,
+                                          "verified": (sha == dev.get(key)) if key in dev else None}
+            except Exception as e:  # noqa: BLE001
+                manifest["banks"][key] = {"file": None, "error": str(e)}
+            man_path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
+    if groups == "all" or "global" in sel:
+        try:
+            m = client().call(Func.CURR_OBJECT_DUMP_REQ, int(ObjType.GLOBAL), expect=Func.CURR_OBJECT_DUMP)
+            from .protocol.messages import build as _build
+
+            (out_dir / "GLOBAL.syx").write_bytes(_build(client().channel, Func.CURR_OBJECT_DUMP, m.data))
+            manifest["global"] = {"file": "GLOBAL.syx", "note": "Current Object Dump (75): al restaurar va al buffer; hay que hacer Write en Global."}
+        except Exception as e:  # noqa: BLE001
+            manifest["global"] = {"error": str(e)}
+    manifest["seconds"] = round(manifest.get("seconds", 0) + _t.time() - t0, 1)
+    man_path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
+    if dev:
+        BASELINE.write_text(json.dumps({"taken": datetime.now().isoformat(timespec="seconds"), "backup": str(out_dir), "digests": dev}, indent=1), encoding="utf-8")
+    banks = manifest["banks"]
+    return {
+        "folder": str(out_dir.resolve()),
+        "banks_saved": sum(1 for v in banks.values() if v.get("file")),
+        "verified_ok": sum(1 for v in banks.values() if v.get("verified")),
+        "verify_mismatch": [k for k, v in banks.items() if v.get("verified") is False],
+        "errors": {k: v["error"] for k, v in banks.items() if "error" in v},
+        "global": manifest.get("global"),
+        "bytes": sum(f.stat().st_size for f in out_dir.glob("*.syx")),
+        "seconds": manifest["seconds"],
+        "baseline_saved": bool(dev),
+    }
+
+
+@mcp.tool()
+def changes_since_baseline() -> dict:
+    """Qué bancos han cambiado desde la última foto de referencia (la guarda backup_all o set_baseline)."""
+    if not BASELINE.exists():
+        return {"error": "No hay foto de referencia: ejecuta backup_all o set_baseline."}
+    base = json.loads(BASELINE.read_text(encoding="utf-8"))
+    now = _digests()
+    changed = []
+    for k, sha in now.items():
+        if base["digests"].get(k) != sha:
+            t, b = (int(x, 16) for x in k.split(":"))
+            try:
+                tn = ObjType(t).name
+            except ValueError:
+                tn = f"0x{t:02X}"
+            changed.append({"type": tn, "bank": _label(t, b), "new_bank": k not in base["digests"]})
+    return {"baseline_taken": base["taken"], "baseline_backup": base.get("backup"), "changed": changed, "unchanged": len(now) - len(changed)}
+
+
+@mcp.tool()
+def set_baseline() -> dict:
+    """Guarda los digests actuales de todos los bancos como nueva foto de referencia (sin hacer backup)."""
+    dev = _digests()
+    BASELINE.write_text(json.dumps({"taken": datetime.now().isoformat(timespec="seconds"), "backup": None, "digests": dev}, indent=1), encoding="utf-8")
+    return {"banks": len(dev), "file": str(BASELINE)}
 
 
 # --- Recursos ------------------------------------------------------------------

@@ -106,3 +106,21 @@ def test_server_new_tools(monkeypatch, tmp_path):
     s.ALLOW_WRITE = True
     r = s.restore_syx(b["file"], confirm=True)
     assert r["banks_stored"] == ["PROGRAM USER-A"] and (0, 0x40) in c.t.stored
+
+
+def test_backup_all_and_baseline(monkeypatch, tmp_path):
+    monkeypatch.setenv("KRONOS_MOCK", "1")
+    import kronos_mcp.server as s
+    from kronos_mcp.knowledge import KnowledgeBase
+    from kronos_mcp.monitor import Monitor
+
+    s.KB, s.MONITOR, s._client, s.BACKUP_DIR = KnowledgeBase(tmp_path / "kb"), Monitor(None), None, tmp_path
+    s.BASELINE = tmp_path / "kb" / "baseline.json"
+    s.BACKUP_PLAN = {"programs": [(ObjType.PROGRAM, 0x40)]}
+    r = s.backup_all("programs")
+    assert r["banks_saved"] == 1 and r["verified_ok"] == 1 and r["baseline_saved"]
+    assert s.changes_since_baseline()["changed"] == []
+    c = s.client()
+    c.t.bank_objects[(0, 0x40, 7)] = b"Cambiado".ljust(3706, b"\0")
+    ch = s.changes_since_baseline()["changed"]
+    assert ch == [{"type": "PROGRAM", "bank": "USER-A", "new_bank": False}]

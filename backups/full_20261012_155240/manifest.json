@@ -1,0 +1,87 @@
+{
+ "created": "2026-10-12T15:52:40",
+ "banks": {
+  "00:00": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:01": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:02": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:03": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:04": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:05": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:40": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:41": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:42": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:43": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:44": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:45": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:46": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:47": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:48": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:49": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:4A": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:4B": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:4C": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  },
+  "00:4D": {
+   "file": null,
+   "error": "Sin respuesta 0x73. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?"
+  }
+ },
+ "digest_error": "Sin respuesta 0x3A. ¿Canal global correcto (1)? ¿Global P1 > MIDI Filter > Exclusive activado?",
+ "seconds": 211.7
+}
