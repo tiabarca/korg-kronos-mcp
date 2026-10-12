@@ -124,3 +124,38 @@ def test_backup_all_and_baseline(monkeypatch, tmp_path):
     c.t.bank_objects[(0, 0x40, 7)] = b"Cambiado".ljust(3706, b"\0")
     ch = s.changes_since_baseline()["changed"]
     assert ch == [{"type": "PROGRAM", "bank": "USER-A", "new_bank": False}]
+
+
+def test_set_list_edit(monkeypatch, tmp_path):
+    monkeypatch.setenv("KRONOS_MOCK", "1")
+    import kronos_mcp.server as s
+    from kronos_mcp.knowledge import KnowledgeBase
+    from kronos_mcp.monitor import Monitor
+    from kronos_mcp.protocol import setlist as sl
+    from kronos_mcp.protocol.constants import SET_LIST_INTERNAL_LEN
+
+    s.KB, s.MONITOR, s._client, s.BACKUP_DIR = KnowledgeBase(tmp_path / "kb"), Monitor(None), None, tmp_path
+    c = s.client()
+    base = bytearray(SET_LIST_INTERNAL_LEN)
+    sl.set_list_name(base, "CONSPIRANOHA")
+    for i in range(128):
+        sl.set_slot(base, i, perf="PROGRAM INT-A 0", volume=127)
+    sl.set_slot(base, 0, name="Clavitizer INTRO", perf="COMBI INT-F 108")
+    src = bytearray(base)
+    sl.set_slot(src, 2, name="PIANO ESTROFA", perf="PROGRAM USER-AA 5", transpose=-12, color=3, font=4, comments="hola")
+    c.t.bank_objects[(0x0D, 0, 19)] = bytes(base)
+    c.t.bank_objects[(0x0D, 0, 16)] = bytes(src)
+    c.t.bank_objects[(0x01, 0x05, 108)] = b"Clavitizer".ljust(7810, b"\0")
+    c.t.bank_objects[(0x00, 0x47, 5)] = b"Piano X".ljust(3706, b"\0")
+    v = s.show_set_list(19)
+    assert v["slots"][0]["perf"] == "COMBI INT-F 108" and v["slots"][0]["perf_name"] == "Clavitizer" and v["used_slots"] == 1
+    changes = [{"slot": 1, "copy_from": {"set_list": 16, "slot": 2}}, {"slot": 2, "name": "BASS", "perf": "PROGRAM USER-AA 5", "volume": 100}]
+    p = s.edit_set_list(19, changes, new_name="HYDE XXI")
+    assert "vista previa" in p["status"] and c.t.bank_objects[(0x0D, 0, 19)] == bytes(base)
+    after1 = p["preview"][0]["after"]
+    assert after1["name"] == "PIANO ESTROFA" and after1["transpose"] == -12 and after1["font"] == 4 and after1["perf_name"] == "Piano X"
+    s.ALLOW_WRITE = True
+    r = s.edit_set_list(19, changes, new_name="HYDE XXI", confirm=True)
+    assert r["verified"] and r["name_after"] == "HYDE XXI" and (0x0D, 0) in c.t.stored
+    raw = sl.get_slot_raw(c.t.bank_objects[(0x0D, 0, 19)], 2)
+    assert (raw["name"], raw["type"], raw["bank"], raw["index"], raw["volume"]) == ("BASS", 1, 24, 5, 100)

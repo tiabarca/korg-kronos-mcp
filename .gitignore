@@ -7,3 +7,25 @@ backups/*.bin
 docs/extra/
 logs/
 dist/
+
+# ---- Datos personales: sonidos, set lists y exportaciones del Kronos (NO subir) ----
+_to_delete/
+backups/
+!backups/.gitkeep
+*.syx
+*.SYX
+*.bin
+*.pcg
+*.PCG
+*.sng
+*.SNG
+*.kmp
+*.ksc
+*.mid
+data/knowledge/snapshots/
+data/knowledge/baseline_digests.json
+data/knowledge/params.json
+data/catalog.json
+data/catalog.md
+data/hyde_combis.json
+logs/

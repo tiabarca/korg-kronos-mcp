@@ -117,13 +117,21 @@ def client() -> KronosClient:
             from .transport.mock import MockKronos
 
             transport = MockKronos(channel)
+            transport.listeners.append(MONITOR.record)
+            _client = KronosClient(transport, channel)
         else:
-            from .transport.midi import MidiTransport
-
-            transport = MidiTransport(os.getenv("KRONOS_MIDI_IN"), os.getenv("KRONOS_MIDI_OUT"))
-        transport.listeners.append(MONITOR.record)
-        _client = KronosClient(transport, channel)
+            # Puertos bajo demanda: se abren al usarlos y se liberan tras KRONOS_IDLE_RELEASE s sin uso
+            _client = KronosClient(None, channel, factory=_open_midi)
+            _client.start_idle_release(float(os.getenv("KRONOS_IDLE_RELEASE", "15")))
     return _client
+
+
+def _open_midi():
+    from .transport.midi import MidiTransport
+
+    t = MidiTransport(os.getenv("KRONOS_MIDI_IN"), os.getenv("KRONOS_MIDI_OUT"))
+    t.listeners.append(MONITOR.record)
+    return t
 
 
 def _require_write(confirm: bool) -> None:
@@ -140,6 +148,24 @@ def list_midi_ports() -> dict:
     from .transport.midi import list_ports
 
     return list_ports()
+
+
+@mcp.tool()
+def reconnect_midi() -> dict:
+    """Cierra y vuelve a abrir los puertos MIDI del Kronos (tras desenchufar el USB, sin reiniciar la app)."""
+    c = client()
+    ok = c._reconnect()
+    return {"reopened": ok, "midi_in": getattr(c._t, "in_name", None), "midi_out": getattr(c._t, "out_name", None)}
+
+
+@mcp.tool()
+def server_instances(kill_orphans: bool = False) -> dict:
+    """Procesos kronos-mcp registrados (este y otros). Un huérfano es uno cuyo cliente ya no existe;
+    con kill_orphans=true se terminan (solo huérfanos del mismo ejecutable)."""
+    from . import lifecycle
+
+    killed = lifecycle.clean_orphans(PID_DIR) if kill_orphans else []
+    return {"this_pid": os.getpid(), "instances": lifecycle.list_instances(PID_DIR), "killed": killed}
 
 
 @mcp.tool()
@@ -371,11 +397,15 @@ def send_raw_sysex(hex_bytes: str, expect_func: str | None = None, confirm: bool
 def connection_status() -> dict:
     """Estado de la conexión: puertos, canal, permisos, monitor y base de conocimiento."""
     c = client()
-    t = c.t
+    t = c._t
     return {
-        "transport": type(t).__name__,
+        "transport": type(t).__name__ if t else "cerrado (se abre al usarlo)",
         "midi_in": getattr(t, "in_name", None),
         "midi_out": getattr(t, "out_name", None),
+        "ports_open": c.is_open,
+        "idle_release_s": c.idle_release,
+        "times_opened": c.opened,
+        "pid": os.getpid(),
         "global_channel": c.channel + 1,
         "write_enabled": ALLOW_WRITE,
         "monitor_seq": MONITOR.seq,
@@ -482,6 +512,8 @@ def learn_start(obj_type: str = "PROGRAM", description: str = "") -> dict:
     Después pide al usuario que cambie UN parámetro en el teclado y llama a learn_finish."""
     obj = ObjType[obj_type.upper()]
     snap = snapshot(obj.name, f"antes: {description}")
+    client().hold = True  # mantener el puerto abierto para recibir lo que envíe el Kronos
+    _ = client().t
     sid = uuid.uuid4().hex[:8]
     _learn_sessions[sid] = {"obj": obj.name, "description": description, "before": snap["snapshot"], "seq": MONITOR.seq}
     return {"session": sid, "before": snap, "next": "Cambia un solo parámetro en el Kronos y avísame para llamar a learn_finish."}
@@ -492,6 +524,7 @@ def learn_finish(session: str, max_runs: int = 32) -> dict:
     """Paso 2: foto 'después', diff y mensajes que el Kronos envió mientras se cambiaba el parámetro."""
     s = _learn_sessions[session]
     after = snapshot(s["obj"], f"después: {s['description']}")
+    client().hold = any(not v.get("finished") for k, v in _learn_sessions.items() if k != session)
     a, _ = KB.load_snapshot(s["before"])
     b, _ = KB.load_snapshot(after["snapshot"])
     d = KB.diff(a, b, max_runs)
@@ -674,6 +707,115 @@ def set_parameter(value: int, param: str | None = None, param_id: str | None = N
             "verified_changes": P.annotate_changes(obj, before, after)}
 
 
+# --- Set Lists: lectura detallada y edición segura ---------------------------------------
+_PERF_TYPE = {0: "Combi", 1: "Program", 2: "Song"}
+
+
+def _read_set_list(n: int) -> tuple[bytes, bytes]:
+    return client().read_object(ObjType.SET_LIST, 0, n)
+
+
+def _perf_label(sl, slot: dict, names: dict) -> dict:
+    t, b, i = slot["type"], slot["bank"], slot["index"]
+    if t == 2:
+        return {"perf": f"SONG {i}", "perf_name": None}
+    bank = sl.COMBI_BANKS[b] if t == 0 and b < 14 else (sl.PROG_SLOT_BANKS[b] if t == 1 and b < 31 else f"?{b}")
+    key = (t, b, i)
+    if key not in names:
+        ob = sl.slot_bank_to_object_bank(t, b)
+        try:
+            data, _ = client().read_object(ObjType.COMBINATION if t == 0 else ObjType.PROGRAM, ob, i)
+            names[key] = _name(data)
+        except Exception:  # noqa: BLE001
+            names[key] = None
+    return {"perf": f"{'COMBI' if t == 0 else 'PROGRAM'} {bank} {i}", "perf_name": names[key]}
+
+
+def _slot_view(sl, data: bytes, slot: int, names: dict, resolve: bool = True) -> dict:
+    s = sl.get_slot_raw(data, slot)
+    v = {"slot": slot, "name": s["name"]}
+    v.update(_perf_label(sl, s, names) if resolve else {"perf": (s["type"], s["bank"], s["index"])})
+    v.update({k: s[k] for k in ("volume", "transpose", "color", "font", "hold_time", "kbd_track")})
+    v["color_name"] = sl.COLOR_NAMES.get(s["color"], str(s["color"]))
+    if s["comments"]:
+        v["comments"] = s["comments"]
+    return v
+
+
+def _is_default_slot(sl, data: bytes, slot: int) -> bool:
+    s = sl.get_slot_raw(data, slot)
+    return (not s["name"] or s["name"].startswith("Slot")) and not s["comments"] and (s["type"], s["bank"], s["index"]) == (1, 0, 0)
+
+
+@mcp.tool()
+def show_set_list(number: int, include_empty: bool = False, resolve_names: bool = True) -> dict:
+    """Muestra un Set List slot a slot: nombre, Program/Combi asignado (con su nombre real), volumen,
+    transposición, color, fuente, hold time, pista de teclado y comentarios. No cambia nada en el teclado."""
+    from .protocol import setlist as sl
+
+    data, _ = _read_set_list(number)
+    names: dict = {}
+    slots = [_slot_view(sl, data, i, names, resolve_names) for i in range(128) if include_empty or not _is_default_slot(sl, data, i)]
+    return {"set_list": number, "name": _name(data), "used_slots": len(slots) if not include_empty else None, "slots": slots}
+
+
+@mcp.tool()
+def edit_set_list(number: int, changes: list[dict], new_name: str | None = None, confirm: bool = False) -> dict:
+    """Edita un Set List. Sin confirm=true solo devuelve la vista previa (antes/después); no escribe nada.
+    changes: lista de operaciones, cada una un dict:
+      {"slot": 3, "name": "PULL ME UNDER", "perf": "COMBI USER-E 64", "volume": 110, "transpose": -2,
+       "color": "Navy" (0-15 o nombre: Default, Charcoal, Brick, Burgundy, Ivy, Olive, Gold, Cacao, Indigo, Navy, Rose, Lavender, Azure, Denim, Silver, Slate), "font": 2, "hold_time": 0, "kbd_track": 0, "comments": "texto"}   (solo los campos a cambiar)
+      {"slot": 4, "copy_from": {"set_list": 16, "slot": 2}}     copia un slot completo de otra lista
+      {"slot": 9, "clear": true}                                deja el slot vacío (Program INT-A 000)
+    Perf: 'COMBI INT-A..G|USER-A..G n' · 'PROGRAM INT-A..F|USER-A..GG|GM|g(1..9)|g(d) n' · 'SONG n'.
+    Con confirm=true: backup de la lista → Object Dump (73) → Store Bank (76) → relectura y verificación."""
+    from .protocol import setlist as sl
+
+    before, raw_before = _read_set_list(number)
+    data = bytearray(before)
+    src_cache: dict[int, bytes] = {}
+    touched = set()
+    for ch in changes:
+        ch = dict(ch)
+        slot = int(ch.pop("slot"))
+        touched.add(slot)
+        if ch.pop("clear", False):
+            sl.set_slot(data, slot, name="", perf="PROGRAM INT-A 0", volume=127, transpose=0, color=0, font=0,
+                        hold_time=0, kbd_track=0, comments="")
+            continue
+        src = ch.pop("copy_from", None)
+        if src:
+            n = int(src["set_list"])
+            if n not in src_cache:
+                src_cache[n] = bytes(data) if n == number else _read_set_list(n)[0]
+            sl.copy_slot(data, slot, src_cache[n], int(src["slot"]))
+        if ch:
+            sl.set_slot(data, slot, **ch)
+    if new_name is not None:
+        sl.set_list_name(data, new_name)
+    names: dict = {}
+    preview = [{"slot": i, "before": _slot_view(sl, before, i, names), "after": _slot_view(sl, bytes(data), i, names)} for i in sorted(touched)]
+    res = {"set_list": number, "name_before": _name(before), "name_after": _name(bytes(data)), "preview": preview}
+    if bytes(data) == before:
+        return {**res, "status": "sin cambios"}
+    if not confirm:
+        return {**res, "status": "vista previa: repite con confirm=true para escribir en el Kronos"}
+    _require_write(confirm)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    bpath = BACKUP_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_SET_LIST_{number:03d}_antes.syx"
+    bpath.write_bytes(raw_before)
+    c = client()
+    c.write_object(ObjType.SET_LIST, 0, number, bytes(data))
+    c.store_bank(ObjType.SET_LIST, 0)
+    after, _ = _read_set_list(number)
+    ok = after == bytes(data)
+    out = {**res, "status": "escrito y verificado" if ok else "ESCRITO PERO LA RELECTURA NO COINCIDE",
+           "verified": ok, "backup_before": str(bpath.resolve())}
+    if not ok:
+        out["diff_bytes"] = sum(1 for a, b in zip(after, data) if a != b)
+    return out
+
+
 # --- Backup completo y foto de referencia ---------------------------------------------
 # (tipo, bancos) a respaldar. Los bancos GM/g(n) son de solo lectura y no se incluyen.
 _USER = [0x40 + i for i in range(14)]  # USER-A..G, USER-AA..GG
@@ -713,8 +855,11 @@ def backup_all(groups: str = "all", folder: str | None = None) -> dict:
         dev = _digests()
         manifest["device_digests"] = dev
     except Exception as e:  # noqa: BLE001
-        dev = manifest.get("device_digests", {})
-        manifest["digest_error"] = str(e)
+        # si ni siquiera contesta a 0x39, no tiene sentido seguir: casi siempre es la entrada MIDI ocupada
+        return {"error": f"El Kronos no responde ({e}).",
+                "hint": "¿Otro programa tiene abierta la entrada MIDI (otro kronos-mcp.exe, Claude Code, un editor)? "
+                        "Ciérralo y reinicia el server. La salida se comparte, así que el Kronos recibe pero no llegan las respuestas.",
+                "folder": str(out_dir.resolve())}
     if "identity" not in manifest:
         try:
             manifest["identity"] = client().identify()
@@ -821,8 +966,322 @@ def constants_reference() -> str:
     )
 
 
+# --- Diseño de sonidos -------------------------------------------------------------
+DESIGNS = DATA_DIR / "designs"
+
+
+def _perf_ref(text: str) -> tuple[int, int]:
+    parts = text.upper().replace(",", " ").split()
+    return bank_code(parts[0]), int(parts[1])
+
+
+def _design(obj: ObjType, target: str, changes: list[dict], name: str | None, base: str | None,
+            action: str, confirm: bool) -> dict:
+    from . import design as D
+
+    label = "PROGRAM" if obj == ObjType.PROGRAM else "COMBI"
+    tb, ti = _perf_ref(target)
+    bb, bi = _perf_ref(base) if base else (tb, ti)
+    data, _ = client().read_object(obj, bb, bi)
+    sources: dict[str, bytes] = {}
+    ops = []
+    for ch in changes:
+        ch = dict(ch)
+        if "from" in ch:
+            ref = ch["from"]
+            kind = ObjType.COMBINATION if str(ch.pop("from_type", "PROGRAM")).upper().startswith("COMBI") else ObjType.PROGRAM
+            key = f"{kind.name}:{ref}"
+            if key not in sources:
+                sb, si = _perf_ref(ref)
+                sources[key], _ = client().read_object(kind, sb, si)
+            ch["from"] = sources[key]
+        ops.append(ch)
+    if name:
+        ops.append({"name": name})
+    new, log = D.apply(obj, data, ops)
+    DESIGNS.mkdir(parents=True, exist_ok=True)
+    rec = {"type": label, "target": target, "base": base or target, "name": name, "changes": changes,
+           "ts": datetime.now().isoformat(timespec="seconds")}
+    (DESIGNS / f"{datetime.now():%Y%m%d_%H%M%S}_{label}_{(name or target).replace(' ', '_').replace('/', '-')}.json").write_text(
+        json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
+    res = {"type": label, "target": target, "base": base or target, "applied": log, "action": action}
+    if obj == ObjType.PROGRAM:
+        res["engine"] = "EXi" if len(new) == PROGRAM_SIZE_EXI else "HD-1"
+        res["summary"] = P.summary(obj, new)
+    else:
+        from . import catalog as C
+
+        res["timbres"] = [{k: t[k] for k in ("timbre", "status", "program_bank", "program_number", "midi_channel", "volume", "transpose", "key_zone")}
+                          for t in C.combi_timbres(new, client().channel + 1)]
+        res["summary"] = P.summary(obj, new)
+    if action == "preview":
+        return res
+    if action == "audition":
+        want = "PROGRAM" if obj == ObjType.PROGRAM else "COMBINATION"
+        if client().get_mode().name != want:
+            raise RuntimeError(f"Pon el Kronos en {want} mode (con un {label} seleccionado) y repite.")
+        cur = client().read_current_object(obj)
+        if len(cur) != len(new):
+            raise RuntimeError(f"El {label} seleccionado es de otro tipo/tamaño ({len(cur)} vs {len(new)} bytes): selecciona {target}.")
+        client().write_current_object(obj, new)
+        back = client().read_current_object(obj)
+        res["status"] = "en el buffer de edición: toca el teclado (no está guardado)"
+        res["verified"] = back == new or back[24:] == new[24:]
+        return res
+    if action == "store":
+        _require_write(confirm)
+        old, raw = client().read_object(obj, tb, ti)
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        bk = BACKUP_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_{label}_{target.replace(' ', '_')}_antes.syx"
+        bk.write_bytes(raw)
+        client().write_object(obj, tb, ti, new)
+        client().store_bank(obj, tb)
+        back, _ = client().read_object(obj, tb, ti)
+        res.update(status="guardado y verificado" if back == new else "GUARDADO PERO LA RELECTURA NO COINCIDE",
+                   verified=back == new, backup_before=str(bk))
+        return res
+    raise ValueError("action: preview | audition | store")
+
+
+@mcp.tool()
+def design_program(target: str, changes: list[dict], name: str | None = None, base: str | None = None,
+                   action: str = "preview", confirm: bool = False) -> dict:
+    """Diseña un Program aplicando cambios con nombre (mapas oficiales, incluido el motor EXi y los efectos).
+    target: dónde vivirá, p. ej. 'USER-AA 003'. base: Program de partida (por defecto el propio target).
+    changes: [{"param": "Filter A] Cutoff", "value": 55}, {"copy_effect": "Insert Effect2", "from": "INT-C 035",
+              "to": "Insert Effect1"}, {"copy_range": [1048, 1050], "from": "INT-C 035"}]
+    action: 'preview' (solo calcula), 'audition' (lo manda al buffer de edición para tocarlo: el teclado debe estar
+    en Program mode con un Program del mismo tipo EXi/HD-1 seleccionado; no guarda nada),
+    'store' (lo escribe en target y lo guarda: requiere confirm=true; hace copia del original antes)."""
+    return _design(ObjType.PROGRAM, target, changes, name, base, action, confirm)
+
+
+@mcp.tool()
+def design_combi(target: str, changes: list[dict], name: str | None = None, base: str | None = None,
+                 action: str = "preview", confirm: bool = False) -> dict:
+    """Diseña una Combi con cambios con nombre (mapa oficial CombiAndSongTimbreSet).
+    Timbres: {"param": "Timbre1 / Bank Number", "value": 24} (códigos de banco: INT-A..F 0-5, GM 6, g(1..9) 7-15,
+    g(d) 16, USER-A..G 17-23, USER-AA..GG 24-30), "Timbre1 / Program Number", "Timbre1 / Status" (0 Off, 1 INT),
+    "Timbre1 / MIDI Channel" (16 = canal global), "Timbre1 / Volume", "Timbre1 / Pan" (64 = centro),
+    "Timbre1 / Transpose", "Timbre1 / Bus Select" (0 L/R, 1 IFX1, 2 IFX2…), "Timbre1 / Send1", "Timbre1 / Send2".
+    Efectos: {"copy_effect": "Insert Effect1", "from": "USER-AA 003", "from_type": "PROGRAM", "to": "Insert Effect2"}.
+    action: preview | audition (Combination mode, Combi seleccionada) | store (confirm=true, copia previa)."""
+    return _design(ObjType.COMBINATION, target, changes, name, base, action, confirm)
+
+
+# --- Extensiones en caliente (sin reiniciar la app) ---------------------------------
+SCRIPTS_DIR = PROJECT_DIR / "scripts"
+
+
+@mcp.tool()
+def run_script(name: str, args: dict | None = None, confirm: bool = False) -> dict:
+    """Ejecuta scripts/<name>.py dentro del server, sin reiniciar la app. Sirve para probar funciones nuevas
+    antes de convertirlas en herramientas. El script define run(ctx, **args) y devuelve un dict;
+    ctx trae client, P (mapas), design, catalog, ObjType, KB, MONITOR, PROJECT_DIR y require_write.
+    Antes de ejecutar recarga los módulos design, catalog y params, así sus cambios entran al momento.
+    Requiere confirm=true (el script puede escribir en el Kronos si llama a ctx.require_write)."""
+    import importlib
+    import importlib.util
+    import types
+
+    from . import catalog as C
+    from . import design as D
+
+    if not confirm:
+        raise PermissionError("run_script ejecuta código del proyecto: repite con confirm=true.")
+    path = (SCRIPTS_DIR / f"{name}.py").resolve()
+    if SCRIPTS_DIR.resolve() not in path.parents or not path.exists():
+        raise FileNotFoundError(f"No existe scripts/{name}.py")
+    for mod in (P, D, C):
+        importlib.reload(mod)
+    spec = importlib.util.spec_from_file_location(f"kronos_script_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    ctx = types.SimpleNamespace(client=client(), P=P, design=D, catalog=C, ObjType=ObjType, KB=KB, MONITOR=MONITOR,
+                                PROJECT_DIR=PROJECT_DIR, DATA_DIR=DATA_DIR, BACKUP_DIR=BACKUP_DIR,
+                                require_write=lambda: _require_write(True), perf_ref=_perf_ref)
+    return module.run(ctx, **(args or {}))
+
+
+# --- Catálogo de Programs y Combis -------------------------------------------------
+CATALOG = DATA_DIR / "catalog.json"
+
+
+def _catalog() -> dict:
+    from . import catalog as C
+
+    cat = C.load(CATALOG)
+    if cat is None:
+        raise RuntimeError("No hay catálogo todavía: llama a build_catalog().")
+    return cat
+
+
+def _save_catalog(cat: dict) -> None:
+    from . import catalog as C
+
+    C.resolve(cat)
+    C.save(cat, CATALOG)
+    (DATA_DIR / "catalog.md").write_text(C.to_markdown(cat), encoding="utf-8")
+
+
+def _fetch_gm_names(cat: dict) -> int:
+    """Nombres de los Programs GM/g(n) que usan las Combis (son de solo lectura y no van en el backup)."""
+    from . import catalog as C
+    from .protocol.setlist import PROG_SLOT_BANKS
+
+    got = 0
+    back = {C.slot_bank_to_object_bank(1, i): name for i, name in enumerate(PROG_SLOT_BANKS)}
+    for ob, n in sorted(C.gm_refs(cat)):
+        key = f"{back.get(ob, hex(ob))} {n:03d}"
+        if key in cat["gm_names"]:
+            continue
+        try:
+            data, _ = client().read_object(ObjType.PROGRAM, ob, n)
+            cat["gm_names"][key] = _name(data)
+            got += 1
+        except Exception:  # noqa: BLE001
+            pass
+    return got
+
+
+@mcp.tool()
+def build_catalog(backup_folder: str | None = None, fetch_gm_names: bool = True) -> dict:
+    """Crea el catálogo de Programs y Combis (nombres y qué Programs usa cada Combi) desde un backup
+    completo (por defecto el más reciente en backups/full_*), sin leer bancos del teclado.
+    fetch_gm_names: pide al Kronos solo los nombres de los Programs GM/g(n) que usan las Combis.
+    Guarda data/catalog.json y data/catalog.md. Después usa refresh_catalog para ponerlo al día."""
+    from . import catalog as C
+
+    if backup_folder:
+        folder = Path(backup_folder)
+    else:
+        fulls = sorted(p for p in BACKUP_DIR.glob("full_*") if p.is_dir())
+        if not fulls:
+            raise RuntimeError("No hay backups completos: ejecuta backup_all primero.")
+        folder = fulls[-1]
+    cat = C.build_from_backup(folder, global_channel=client().channel + 1)
+    gm = 0
+    if fetch_gm_names:
+        try:
+            gm = _fetch_gm_names(cat)
+        except Exception:  # noqa: BLE001 - sin teclado el catálogo vale igual
+            pass
+    _save_catalog(cat)
+    kb = sum(1 for c in cat["combis"].values() for t in c["timbres"] if t["keyboard"])
+    return {"source": str(folder), "programs": len(cat["programs"]), "combis": len(cat["combis"]),
+            "keyboard_timbres": kb, "gm_names_read": gm, "file": str(CATALOG), "markdown": str(DATA_DIR / "catalog.md")}
+
+
+@mcp.tool()
+def refresh_catalog() -> dict:
+    """Pone al día el catálogo: compara los digests del Kronos y solo vuelve a leer los bancos de
+    Programs/Combis que han cambiado desde que se creó."""
+    from . import catalog as C
+
+    cat = _catalog()
+    dev = _digests()
+    changed = [k for k, sha in dev.items() if k[:2] in ("00", "01") and k in cat["bank_sha1"] and cat["bank_sha1"][k] != sha]
+    for k in changed:
+        obj, b = ObjType(int(k[:2], 16)), int(k[3:], 16)
+        for i, data, _raw in _bank_raw(obj, b):
+            C.add_object(cat, int(obj), b, i, data, client().channel + 1)
+        cat["bank_sha1"][k] = dev[k]
+    gm = _fetch_gm_names(cat) if changed else 0
+    _save_catalog(cat)
+    return {"banks_reread": [f"{'PROGRAM' if k[:2] == '00' else 'COMBI'} {_label(int(k[:2], 16), int(k[3:], 16))}" for k in changed],
+            "gm_names_read": gm, "up_to_date": not changed}
+
+
+def _perf_key(text: str) -> str:
+    """'int-a 5' / 'INT-A 005' / 'USER-AA 12' → 'INT-A 005'."""
+    parts = text.upper().replace(",", " ").split()
+    if len(parts) != 2:
+        raise ValueError(f"Formato: 'INT-A 102' (recibido {text!r})")
+    return f"{parts[0]} {int(parts[1]):03d}"
+
+
+@mcp.tool()
+def find_sound(query: str, kind: str = "all", limit: int = 40) -> dict:
+    """Busca por nombre en el catálogo. kind: 'all', 'program' o 'combi'. Para Combis también
+    encuentra las que contienen un Program cuyo nombre coincide."""
+    cat = _catalog()
+    q = query.lower()
+    out: dict = {"combis": [], "programs": [], "combis_containing": []}
+    if kind in ("all", "combi"):
+        for k, c in cat["combis"].items():
+            if q in c["name"].lower():
+                out["combis"].append({"combi": k, "name": c["name"],
+                                      "programs": [f"{t['program']} {t.get('program_name') or ''}".strip() for t in c["timbres"] if t["keyboard"]]})
+        for k, c in cat["combis"].items():
+            hits = [f"T{t['timbre']} {t['program']} {t['program_name']}" for t in c["timbres"] if t["keyboard"] and q in (t.get("program_name") or "").lower()]
+            if hits and q not in c["name"].lower():
+                out["combis_containing"].append({"combi": k, "name": c["name"], "matching_timbres": hits})
+    if kind in ("all", "program"):
+        for k, p in cat["programs"].items():
+            if q in p["name"].lower():
+                out["programs"].append({"program": k, "name": p["name"], "engine": p["engine"], "used_in_combis": p["used_in_combis"][:20],
+                                        "used_count": len(p["used_in_combis"])})
+    for key in out:
+        out[key] = out[key][:limit]
+    return out
+
+
+@mcp.tool()
+def combi_info(combi: str, all_timbres: bool = False) -> dict:
+    """Programs que contiene una Combi ('INT-A 102'): timbre, Program y nombre, volumen, zona de teclado,
+    transposición. Por defecto solo los timbres que suenan desde el teclado (INT en canal global)."""
+    cat = _catalog()
+    k = _perf_key(combi)
+    c = cat["combis"].get(k)
+    if c is None:
+        raise KeyError(f"No existe la Combi {k}")
+    ts = c["timbres"] if all_timbres else [t for t in c["timbres"] if t["keyboard"]]
+    keep = ("timbre", "status", "program", "program_name", "midi_channel", "volume", "transpose", "key_zone", "keyboard")
+    return {"combi": k, "name": c["name"], "timbres": [{x: t[x] for x in keep if x in t} for t in ts],
+            "hidden_timbres": len(c["timbres"]) - len(ts)}
+
+
+@mcp.tool()
+def program_usage(program: str) -> dict:
+    """En qué Combis se usa un Program ('USER-B 007'), desde el teclado."""
+    cat = _catalog()
+    k = _perf_key(program)
+    p = cat["programs"].get(k)
+    if p is None:
+        raise KeyError(f"No existe el Program {k}")
+    return {"program": k, "name": p["name"], "engine": p["engine"],
+            "combis": [{"combi": ck, "name": cat["combis"][ck]["name"]} for ck in p["used_in_combis"]]}
+
+
+PID_DIR = Path(os.getenv("KRONOS_LOG_DIR", PROJECT_DIR / "logs")) / "pids"
+
+
+def _shutdown(code: int = 0) -> None:
+    try:
+        if _client is not None:
+            _client.release()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        (PID_DIR / f"{os.getpid()}.json").unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(code)  # los hilos de rtmidi no deben mantener vivo el proceso
+
+
 def main() -> None:
-    mcp.run()
+    from . import lifecycle
+
+    try:
+        lifecycle.clean_orphans(PID_DIR)
+        lifecycle.register(PID_DIR)
+        lifecycle.watch_parent(_shutdown)
+    except Exception:  # noqa: BLE001 - nunca impedir el arranque por esto
+        pass
+    try:
+        mcp.run()
+    finally:
+        _shutdown(0)
 
 
 if __name__ == "__main__":

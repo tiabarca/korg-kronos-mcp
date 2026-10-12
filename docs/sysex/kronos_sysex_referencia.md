@@ -251,7 +251,10 @@ def encode_7bit(data: bytes) -> bytes:
 ### Estructura de Set List (69 416 bytes internos) ✅
 - `name[24]`, `slots[128]`, `eq_bypass`, `band_levels[9]`, `control_surface_mode`, `control_surface_assign_from` (0 = Slot, 1 = Set List), `slots_per_page` (0 = 16, 1 = 8, 2 = 4), `reserved[3]`. Si `name[0] == 0xFF` el set list está sin inicializar.
 - **Slot** (542 bytes): `name[24]`, `performance_type` (bits 0-1 tipo, 2-5 color, 6-7 bits bajos de fuente), `performance_bank` (bits 0-4 banco, 5-7 bits altos de transposición), `performance_index`, `hold_time`, `volume`, `keyboard_track` (bits 0-3 kbd track, bit 4 bit alto de fuente, 5-7 bits bajos de transposición), `comments[512]`.
-- Bancos de performance: INT-A…F = `00–05`, GM = `06`, g(1)…g(9) = `07–0F`, g(d) = `10`, USER-A…G = `11–17`, USER-AA…GG = `18–1E`.
+- Tipo de performance 🔌 (comprobado en el teclado): **0 = Combi, 1 = Program, 2 = Song**.
+- Bancos de performance (Program): INT-A…F = `00–05`, GM = `06`, g(1)…g(9) = `07–0F`, g(d) = `10`, USER-A…G = `11–17`, USER-AA…GG = `18–1E`. Combi: INT-A…G = `00–06`, USER-A…G = `07–0D`.
+- **Colores de slot** 🔌 (nombres del diálogo *Slot Color*, OS 3.1.3; confirmado pintando la lista 19 con 0–15): 0 Default · 1 Charcoal · 2 Brick · 3 Burgundy · 4 Ivy · 5 Olive · 6 Gold · 7 Cacao · 8 Indigo · 9 Navy · 10 Rose · 11 Lavender · 12 Azure · 13 Denim · 14 Silver · 15 Slate.
+- Para guardar una lista editada: `73 0D 00 00 nn …` + `76 0D 00` → se escribe y persiste (verificado releyendo).
 
 ### Selección de bancos por CC (Program mode) ✅
 INT-A…F: `B0 00 00` + `B0 20 00…05` · I-G (GM): `B0 00 79` · USER-A…G: `B0 00 00` + `B0 20 08…0E`, seguido de Program Change.

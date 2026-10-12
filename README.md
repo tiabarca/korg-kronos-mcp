@@ -11,6 +11,9 @@ kronos/
 │   ├── client.py          # Petición/respuesta SysEx, timeouts
 │   ├── monitor.py         # Registro y decodificación de todo el tráfico MIDI
 │   ├── knowledge.py       # Snapshots, diff y mapa de parámetros aprendido
+│   ├── catalog.py         # Catálogo de Programs/Combis y uso de cada Program
+│   ├── design.py          # Diseño de sonidos con nombres oficiales de parámetros
+│   ├── lifecycle.py       # Control de procesos (PIDs, instancias huérfanas)
 │   ├── protocol/
 │   │   ├── constants.py   # Funciones, tipos de objeto, modos, códigos de error
 │   │   ├── codec.py       # Codificación 7→8 bits de Korg
@@ -19,6 +22,8 @@ kronos/
 │   └── transport/
 │       ├── midi.py        # MIDI real (mido + python-rtmidi)
 │       └── mock.py        # Kronos simulado para desarrollar sin teclado
+├── scripts/               # Scripts en caliente para run_script (def run(ctx, **args))
+├── tools/                 # build_param_maps.py, run_checks, matar_servers.bat
 ├── tests/                 # pytest (usa el mock)
 ├── data/
 │   ├── knowledge/              # Lo aprendido en caliente (params.json, notes.jsonl, snapshots/)
@@ -34,24 +39,39 @@ kronos/
 
 ## Instalación (Windows)
 
+Requisitos: Python 3.11 o superior, el **KORG USB-MIDI Driver** y el Kronos conectado por USB (o por una interfaz MIDI).
+
 ```powershell
+git clone <url-del-repo> C:\dev\kronos
 cd C:\dev\kronos
 python -m venv .venv
-.venv\Scripts\activate
-pip install -e .[dev]
-pytest                      # tests contra el Kronos simulado
+.venv\Scriptsctivate
+pip install -e .[dev]       # instala también el comando kronos-mcp en .venv\Scripts
+pytest                      # tests contra el Kronos simulado (test_live.py necesita teclado y se omite)
 ```
 
-Necesitas el **KORG USB-MIDI Driver** instalado y el Kronos conectado por USB (o una interfaz MIDI).
+Comprobaciones:
+
+```powershell
+$env:KRONOS_MOCK = "1"; kronos-mcp      # arranca el server sin teclado (Ctrl+C para salir)
+toolsun_checks.bat                    # con el Kronos: pruebas de solo lectura -> logs\checks_*.json
+```
+
+Los datos personales (`backups/`, `*.syx`, `data/catalog.*`, `data/knowledge/params.json`, `logs/`) no se versionan.
+Los mapas de `data/params/` ya vienen en el repo; para regenerarlos: `python tools/build_param_maps.py`.
 
 ## Configuración del Kronos
 
 - **Global P1 → MIDI Filter → Exclusive**: activado.
 - **Canal MIDI global**: debe coincidir con `KRONOS_CHANNEL` (1 por defecto).
 
-## Uso con Claude Desktop
+## Registrar el server en el cliente MCP
 
-Copia el bloque de `claude_desktop_config.example.json` en `%APPDATA%\Claude\claude_desktop_config.json`.
+**Claude Code:** copia `mcp.example.json` como `.mcp.json` en la raíz (ajusta la ruta si no usas `C:\dev\kronos`) y abre la carpeta. `CLAUDE.md` le da el contexto y las reglas.
+
+**Claude Desktop:** copia el bloque de `claude_desktop_config.example.json` en `%APPDATA%\Claude\claude_desktop_config.json` y reinicia la app.
+
+Tras actualizar el código (`git pull`) vuelve a ejecutar `pip install -e .[dev]` y reinicia el cliente para que cargue el server nuevo.
 
 | Variable | Uso |
 |---|---|
@@ -132,8 +152,18 @@ Logs completos del monitor en `logs/*.jsonl` (no versionados).
 2. Global P1 → MIDI Filter → Exclusive activado (para que el Kronos también *emita* los cambios de parámetros).
 3. Arranca con `KRONOS_ALLOW_WRITE=0`: la exploración no necesita escribir.
 
-### Claude Code
-Copia `mcp.example.json` como `.mcp.json` para que Claude Code registre el server al abrir `C:\dev\kronos` (tras crear el `.venv`). `CLAUDE.md` le da el contexto y las reglas.
+## Catálogo, diseño y automatización
+
+| Tool | Escribe | Uso |
+|---|---|---|
+| `backup_all` | – | Backup completo de todos los bancos a una carpeta |
+| `set_baseline` / `changes_since_baseline` | – | Referencia de digests y qué bancos han cambiado desde entonces |
+| `build_catalog` / `refresh_catalog` | – | Catálogo de Programs y Combis desde un backup; refresco leyendo solo bancos cambiados |
+| `find_sound` / `program_usage` | – | Busca sonidos por nombre y qué Combis usan un Program |
+| `design_program` / `design_combi` | ✔ | Aplica cambios con nombre (`param`, `copy_effect`, `copy_range`, `name`) y guarda el diseño en `data/designs/` |
+| `get_set_list` / `show_set_list` / `edit_set_list` | ✔ (edit) | Lee y edita la Set List |
+| `run_script` | según script | Ejecuta un script de `scripts/` con acceso al cliente (`confirm=true` si escribe) |
+| `server_instances` / `reconnect_midi` | – | Instancias del server y reapertura de puertos |
 
 ## Pendiente
 
@@ -142,3 +172,17 @@ Copia `mcp.example.json` como `.mcp.json` para que Claude Code registre el serve
 - Validar con el teclado: digests de fábrica (`bank_status` en un Kronos restaurado), `set_parameter` y emisión de 0x43 al tocar controles.
 - Parámetros binarios (0x44/0x54/0x56: UUID de bancos de samples).
 - Song Event / Drum Track Pattern Event (formatos especiales).
+
+## Procesos y puertos MIDI (robustez en sesiones largas)
+
+- **Puertos bajo demanda:** el server abre los puertos MIDI al hacer una operación y los cierra tras
+  `KRONOS_IDLE_RELEASE` segundos sin uso (15 por defecto). Así no se retiene la entrada MIDI (en Windows
+  solo la puede usar un proceso) y un desenchufe del USB o una re-enumeración del Kronos no deja una
+  conexión muerta: la siguiente operación abre puertos nuevos.
+- **Reintento automático:** si el Kronos no responde, se reabren los puertos y se repite una vez.
+  `reconnect_midi` lo fuerza a mano.
+- **Sin procesos colgados:** el server termina con `os._exit` al cerrarse el cliente (los hilos de rtmidi
+  ya no lo mantienen vivo), vigila a su proceso padre y, al arrancar, termina instancias huérfanas
+  (registradas en `logs/pids/`). `server_instances` muestra las instancias.
+- **Limpieza manual:** `tools\matar_servers.bat` termina todos los procesos kronos-mcp (con la app cerrada).
+- En `learn_start` los puertos se mantienen abiertos (máx. 10 min) para recibir lo que envía el Kronos.

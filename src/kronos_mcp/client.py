@@ -28,12 +28,98 @@ class KronosTimeout(Exception):
 
 
 class KronosClient:
-    def __init__(self, transport: Transport, channel: int = 0, timeout: float = 5.0):
-        self.t = transport
+    def __init__(self, transport: Transport | None, channel: int = 0, timeout: float = 5.0, factory=None):
+        """transport: transporte ya abierto (tests/mock). factory: función que abre los puertos
+        bajo demanda; con ella los puertos se abren al usarlos y se liberan tras un rato sin uso."""
+        self._t = transport
+        self.factory = factory
         self.channel = channel
         self.timeout = timeout
         self.log: list[tuple[str, str]] = []  # (dir, hex) para depuración
         self.lock = threading.RLock()  # una petición/respuesta cada vez
+        self.last_use = time.monotonic()
+        self.hold_until = 0.0  # no liberar los puertos antes de este instante (aprendizaje en curso)
+        self.idle_release: float | None = None
+        self.opened = 0  # nº de veces que se han abierto los puertos
+
+    # --- Gestión de puertos -------------------------------------------------
+    @property
+    def t(self) -> Transport:
+        with self.lock:
+            if self._t is None:
+                if self.factory is None:
+                    raise RuntimeError("Sin transporte MIDI")
+                self._t = self.factory()
+                self.opened += 1
+            self.last_use = time.monotonic()
+            return self._t
+
+    @t.setter
+    def t(self, value: Transport | None) -> None:
+        self._t = value
+
+    @property
+    def hold(self) -> bool:
+        return time.monotonic() < self.hold_until
+
+    @hold.setter
+    def hold(self, value: bool) -> None:
+        # como mucho 10 minutos, por si nunca se llama a learn_finish
+        self.hold_until = time.monotonic() + 600 if value else 0.0
+
+    @property
+    def is_open(self) -> bool:
+        return self._t is not None
+
+    def release(self) -> bool:
+        """Cierra los puertos MIDI (se reabren solos en la siguiente operación)."""
+        with self.lock:
+            if self._t is None or self.factory is None:
+                return False
+            try:
+                self._t.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._t = None
+            return True
+
+    def start_idle_release(self, seconds: float) -> None:
+        """Libera los puertos tras `seconds` sin uso: no se retiene el puerto (exclusivo en Windows)
+        y un desenchufe del USB o una re-enumeración no deja una conexión muerta."""
+        self.idle_release = seconds
+
+        def loop():
+            while True:
+                time.sleep(1.0)
+                if self._t is None or self.hold or time.monotonic() - self.last_use < seconds:
+                    continue
+                if self.lock.acquire(blocking=False):
+                    try:
+                        if time.monotonic() - self.last_use >= seconds and not self.hold:
+                            self.release()
+                    finally:
+                        self.lock.release()
+
+        threading.Thread(target=loop, name="midi-idle-release", daemon=True).start()
+
+    def _reconnect(self) -> bool:
+        if self.factory is None:
+            return False
+        self.release()
+        try:
+            _ = self.t
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _retrying(self, fn):
+        """Ejecuta fn; si no hay respuesta, reabre los puertos MIDI y lo reintenta una vez."""
+        try:
+            return fn()
+        except KronosTimeout:
+            if not self._reconnect():
+                raise
+            return fn()
 
     # --- E/S básica -------------------------------------------------------
     def _send(self, raw: bytes) -> None:
@@ -64,8 +150,10 @@ class KronosClient:
 
     def call(self, func: int, *payload, expect: int = Func.REPLY) -> KronosMessage:
         with self.lock:
-            self._send(build(self.channel, func, *payload))
-            return self._wait(expect)
+            def once():
+                self._send(build(self.channel, func, *payload))
+                return self._wait(expect)
+            return self._retrying(once)
 
     def send_raw(self, raw: bytes, expect: int | None = None) -> KronosMessage | None:
         with self.lock:
@@ -74,6 +162,10 @@ class KronosClient:
 
     # --- Operaciones ------------------------------------------------------
     def identify(self) -> dict:
+        with self.lock:
+            return self._retrying(self._identify_once)
+
+    def _identify_once(self) -> dict:
         self._send(IDENTITY_REQUEST)
         deadline = time.monotonic() + self.timeout
         while (left := deadline - time.monotonic()) > 0:

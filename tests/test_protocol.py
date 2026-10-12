@@ -100,3 +100,20 @@ def test_server_tools_mock(monkeypatch, tmp_path):
     assert b["objects"] == 128
     s.ALLOW_WRITE = True
     assert s.restore_syx(b["file"], confirm=True)["objects_written"] == 128
+
+
+def test_setlist_color_names():
+    from kronos_mcp.protocol import setlist as sl
+
+    assert sl.color_code("rojo") == 2 and sl.color_code("Azul Oscuro") == 9 and sl.color_code("Burgundy") == 3
+    assert [sl.COLOR_NAMES[i] for i in (0, 7, 15)] == ["Default", "Cacao", "Slate"] and sl.color_code("navy") == 9
+    assert sl.color_code(7) == 7 and sl.color_code("12") == 12
+    data = bytearray(sl.SET_LIST_INTERNAL_LEN if hasattr(sl, "SET_LIST_INTERNAL_LEN") else 69416)
+    sl.set_slot(data, 5, color="violeta")
+    assert sl.get_slot_raw(bytes(data), 5)["color"] == 11
+    try:
+        sl.color_code("fucsia")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError
