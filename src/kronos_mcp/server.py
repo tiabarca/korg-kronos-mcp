@@ -659,12 +659,64 @@ def bank_status(model: str = "KRONOS") -> dict:
 
 @mcp.tool()
 def decode_object(obj_type: str = "PROGRAM", bank: str | None = None, index: int | None = None,
-                  query: str | None = None, limit: int = 150) -> dict:
+                  query: str | list[str] | None = None, limit: int = 150, format: str = "compact",
+                  header: bool | None = None, skip_defaults: bool | None = None, groups: list[str] | None = None) -> dict:
     """Interpreta un objeto con el mapa oficial (nombres reales, efectos y motor EXi incluidos).
-    Sin bank/index usa el buffer de edición. query filtra por texto (p. ej. 'Filter', 'Insert Effect1', 'LFO')."""
+    Sin bank/index usa el buffer de edición.
+    format 'compact' (por defecto): una línea 'Nombre = valor'. 'full': param/value/ofs/range/id como antes.
+    query: texto o LISTA de textos ('Filter', ['[Filter A] Cutoff', 'Amplifier EG]', 'Legato']) → una sola llamada.
+    header: incluir effects/exi/size (por defecto solo si no hay query).
+    skip_defaults: omitir parámetros a 0/vacío (por defecto activo si no hay query).
+    groups: en compact sin query se excluyen KARMA, Audio Input, S/PDIF, Drum Track y Vector Control; pídelos aquí."""
     obj = ObjType[obj_type.upper()]
     data, meta = _read(obj, bank, index)
-    return {**meta, **_summary(obj, data), "size": len(data), "params": P.decode(obj, data, query, limit)}
+    if format not in ("compact", "full"):
+        raise ValueError("format: compact | full")
+    if header is None:
+        header = not query
+    out = dict(meta)
+    if header or format == "full":
+        out.update(_summary(obj, data))
+        out["size"] = len(data)
+    elif obj in NAMED_TYPES:
+        out["name"] = _name(data)
+    if format == "full":
+        qs = [query] if isinstance(query, str) or query is None else query
+        seen, params = set(), []
+        for q in qs or [None]:
+            for it in P.decode(obj, data, q, limit):
+                if it["param"] not in seen:
+                    seen.add(it["param"])
+                    params.append(it)
+        out["params"] = params[:limit]
+        return out
+    out.update(P.decode_compact(obj, data, query, groups, (not query) if skip_defaults is None else skip_defaults, limit))
+    return out
+
+
+@mcp.tool()
+def voice_summary(ref: str | None = None, obj_type: str = "PROGRAM") -> dict:
+    """Resumen legible (~30 líneas) de un Program o Combi en una llamada: voz Poly/Legato, osciladores, filtro,
+    Amp EG y EG1 (A/D/S/R + niveles), LFOs activos y cadena de efectos (IFX → MFX con Returns → TFX).
+    Detalle completo para AL-1; otros motores EXi muestran sus secciones principales no nulas.
+    ref: 'USER-G 028' o 'INT-B 025'; sin ref usa el buffer de edición. obj_type: PROGRAM | COMBINATION."""
+    from . import voice
+
+    obj = ObjType[obj_type.upper()]
+    if obj not in (ObjType.PROGRAM, ObjType.COMBINATION):
+        raise ValueError("obj_type: PROGRAM | COMBINATION")
+    data, meta = _read(obj, *_perf_ref(ref)) if ref else _read(obj, None, None)
+    if obj == ObjType.PROGRAM:
+        lines = voice.program(data)
+    else:
+        from . import catalog as C
+
+        try:
+            names = {k: v["name"] for k, v in (C.load(CATALOG) or {"programs": {}})["programs"].items()}
+        except Exception:  # noqa: BLE001
+            names = {}
+        lines = voice.combi(data, client().channel + 1, names)
+    return {"ref": ref or "edit_buffer", "lines": lines}
 
 
 @mcp.tool()
@@ -975,8 +1027,24 @@ def _perf_ref(text: str) -> tuple[int, int]:
     return bank_code(parts[0]), int(parts[1])
 
 
+def _catalog_after_store(obj: ObjType, bank: int, index: int, data: bytes) -> bool:
+    """Refleja en el catálogo (si existe) el Program/Combi recién guardado, sin refresh_catalog."""
+    from . import catalog as C
+
+    cat = C.load(CATALOG)
+    if cat is None:
+        return False
+    C.update_entry(cat, int(obj), bank, index, data, client().channel + 1)
+    try:  # el digest nuevo evita que refresh_catalog relea el banco entero
+        cat["bank_sha1"][f"{int(obj):02X}:{bank:02X}"] = client().bank_digest(obj, bank)
+    except Exception:  # noqa: BLE001
+        pass
+    _save_catalog(cat)
+    return True
+
+
 def _design(obj: ObjType, target: str, changes: list[dict], name: str | None, base: str | None,
-            action: str, confirm: bool) -> dict:
+            action: str, confirm: bool, verbose: bool = False, init_unused_timbres: bool = False) -> dict:
     from . import design as D
 
     label = "PROGRAM" if obj == ObjType.PROGRAM else "COMBI"
@@ -996,6 +1064,14 @@ def _design(obj: ObjType, target: str, changes: list[dict], name: str | None, ba
                 sources[key], _ = client().read_object(kind, sb, si)
             ch["from"] = sources[key]
         ops.append(ch)
+    extra: dict = {}
+    if init_unused_timbres:
+        if obj != ObjType.COMBINATION:
+            raise ValueError("init_unused_timbres solo aplica a Combis")
+        more, skipped = D.unused_timbre_ops(obj, data, ops)
+        ops += more
+        if skipped:
+            extra["init_skipped_in_use"] = skipped
     if name:
         ops.append({"name": name})
     new, log = D.apply(obj, data, ops)
@@ -1004,15 +1080,17 @@ def _design(obj: ObjType, target: str, changes: list[dict], name: str | None, ba
            "ts": datetime.now().isoformat(timespec="seconds")}
     (DESIGNS / f"{datetime.now():%Y%m%d_%H%M%S}_{label}_{(name or target).replace(' ', '_').replace('/', '-')}.json").write_text(
         json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
-    res = {"type": label, "target": target, "base": base or target, "applied": log, "action": action}
-    if obj == ObjType.PROGRAM:
-        res["engine"] = "EXi" if len(new) == PROGRAM_SIZE_EXI else "HD-1"
-        res["summary"] = P.summary(obj, new)
-    else:
-        from . import catalog as C
+    res = {"type": label, "target": target, "applied": log, "action": action, **extra}
+    if base and base != target:
+        res["base"] = base
+    if verbose:
+        if obj == ObjType.PROGRAM:
+            res["engine"] = "EXi" if len(new) == PROGRAM_SIZE_EXI else "HD-1"
+        else:
+            from . import catalog as C
 
-        res["timbres"] = [{k: t[k] for k in ("timbre", "status", "program_bank", "program_number", "midi_channel", "volume", "transpose", "key_zone")}
-                          for t in C.combi_timbres(new, client().channel + 1)]
+            res["timbres"] = [{k: t[k] for k in ("timbre", "status", "program_bank", "program_number", "midi_channel", "volume", "transpose", "key_zone")}
+                              for t in C.combi_timbres(new, client().channel + 1)]
         res["summary"] = P.summary(obj, new)
     if action == "preview":
         return res
@@ -1026,7 +1104,7 @@ def _design(obj: ObjType, target: str, changes: list[dict], name: str | None, ba
         client().write_current_object(obj, new)
         back = client().read_current_object(obj)
         res["status"] = "en el buffer de edición: toca el teclado (no está guardado)"
-        res["verified"] = back == new or back[24:] == new[24:]
+        res["verified"] = D.same(obj, back, new) or D.same(obj, back[24:], new[24:])
         return res
     if action == "store":
         _require_write(confirm)
@@ -1037,36 +1115,64 @@ def _design(obj: ObjType, target: str, changes: list[dict], name: str | None, ba
         client().write_object(obj, tb, ti, new)
         client().store_bank(obj, tb)
         back, _ = client().read_object(obj, tb, ti)
-        res.update(status="guardado y verificado" if back == new else "GUARDADO PERO LA RELECTURA NO COINCIDE",
-                   verified=back == new, backup_before=str(bk))
+        ok = D.same(obj, back, new)
+        res.update(status="guardado y verificado" if ok else "GUARDADO PERO LA RELECTURA NO COINCIDE",
+                   verified=ok, backup_before=str(bk))
+        if not ok:
+            res["diff_bytes"] = sum(1 for a, b in zip(back, new) if a != b)
+        try:
+            res["catalog_updated"] = _catalog_after_store(obj, tb, ti, back)
+        except Exception as e:  # noqa: BLE001 - el catálogo nunca debe hacer fallar un store ya hecho
+            res["catalog_updated"] = f"error: {e}"
         return res
     raise ValueError("action: preview | audition | store")
 
 
 @mcp.tool()
 def design_program(target: str, changes: list[dict], name: str | None = None, base: str | None = None,
-                   action: str = "preview", confirm: bool = False) -> dict:
+                   action: str = "preview", confirm: bool = False, verbose: bool = False) -> dict:
     """Diseña un Program aplicando cambios con nombre (mapas oficiales, incluido el motor EXi y los efectos).
     target: dónde vivirá, p. ej. 'USER-AA 003'. base: Program de partida (por defecto el propio target).
     changes: [{"param": "Filter A] Cutoff", "value": 55}, {"copy_effect": "Insert Effect2", "from": "INT-C 035",
               "to": "Insert Effect1"}, {"copy_range": [1048, 1050], "from": "INT-C 035"}]
     action: 'preview' (solo calcula), 'audition' (lo manda al buffer de edición para tocarlo: el teclado debe estar
     en Program mode con un Program del mismo tipo EXi/HD-1 seleccionado; no guarda nada),
-    'store' (lo escribe en target y lo guarda: requiere confirm=true; hace copia del original antes)."""
-    return _design(ObjType.PROGRAM, target, changes, name, base, action, confirm)
+    'store' (lo escribe en target y lo guarda: requiere confirm=true; hace copia del original antes).
+    copy_effect conserva por defecto Chain Switch / Chain To / Bus Select del destino (keep_routing=false para copiarlos)
+    y, en Master Effect1/2, copia también su Return (copy_return=false lo evita).
+    Respuesta ligera: applied (solo lo que cambia), status, verified, backup_before. verbose=true añade el summary."""
+    return _design(ObjType.PROGRAM, target, changes, name, base, action, confirm, verbose)
 
 
 @mcp.tool()
 def design_combi(target: str, changes: list[dict], name: str | None = None, base: str | None = None,
-                 action: str = "preview", confirm: bool = False) -> dict:
+                 action: str = "preview", confirm: bool = False, verbose: bool = False,
+                 init_unused_timbres: bool = False) -> dict:
     """Diseña una Combi con cambios con nombre (mapa oficial CombiAndSongTimbreSet).
     Timbres: {"param": "Timbre1 / Bank Number", "value": 24} (códigos de banco: INT-A..F 0-5, GM 6, g(1..9) 7-15,
     g(d) 16, USER-A..G 17-23, USER-AA..GG 24-30), "Timbre1 / Program Number", "Timbre1 / Status" (0 Off, 1 INT),
     "Timbre1 / MIDI Channel" (16 = canal global), "Timbre1 / Volume", "Timbre1 / Pan" (64 = centro),
     "Timbre1 / Transpose", "Timbre1 / Bus Select" (0 L/R, 1 IFX1, 2 IFX2…), "Timbre1 / Send1", "Timbre1 / Send2".
     Efectos: {"copy_effect": "Insert Effect1", "from": "USER-AA 003", "from_type": "PROGRAM", "to": "Insert Effect2"}.
-    action: preview | audition (Combination mode, Combi seleccionada) | store (confirm=true, copia previa)."""
-    return _design(ObjType.COMBINATION, target, changes, name, base, action, confirm)
+    action: preview | audition (Combination mode, Combi seleccionada) | store (confirm=true, copia previa).
+    init_unused_timbres=true: Status=Off en los timbres que `changes` no toca y que siguen inicializados
+    (Program 0, banco INT-A); los que parecen en uso se dejan y se listan en init_skipped_in_use.
+    copy_effect: keep_routing (true) conserva Chain/Bus del destino; en Master Effect copia también el Return.
+    Respuesta ligera (applied/status/verified/backup_before); verbose=true añade timbres y summary."""
+    return _design(ObjType.COMBINATION, target, changes, name, base, action, confirm, verbose, init_unused_timbres)
+
+
+@mcp.tool()
+def play_notes(events: list[dict], bpm: float = 120, channel: int | None = None, select: str | None = None,
+               select_mode: str = "COMBINATION") -> dict:
+    """Toca notas por MIDI para oír un sonido (no escribe nada en el Kronos).
+    events: [{"n": 74 | "D5" | [50,54,57], "dur": 0.5 (negras), "vel": 100, "at": opcional (negras desde el inicio)}];
+    sin "n" es un silencio; sin "at" cada evento empieza al acabar el anterior. channel 1-16 (por defecto el global).
+    select: 'INT-B 025' -> Bank Select + Program Change antes de tocar (pasa a select_mode COMBINATION|PROGRAM si hace falta;
+    en los bancos USER-* el LSB es el código de banco del SysEx: sin confirmar). Límite 60 s; siempre acaba con All Notes Off."""
+    from . import play
+
+    return play.play(client(), events, bpm, channel, select, select_mode)
 
 
 # --- Extensiones en caliente (sin reiniciar la app) ---------------------------------

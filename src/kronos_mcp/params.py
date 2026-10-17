@@ -164,6 +164,58 @@ def decode(obj: ObjType, data: bytes, query: str | None = None, limit: int = 300
     return out
 
 
+# grupos pesados que no se muestran en compact sin query (se piden con groups=[...])
+HEAVY_GROUPS = ("karma", "dynamic midi", "audio input", "s/pdif", "drum track", "vector control")
+
+
+def value_text(f: dict, v) -> str:
+    """Valor legible: el mapa solo da los extremos de la lista ('Off~On', 'Poly~Mono'), así que se traducen
+    esos; el resto queda numérico. El texto del mapa viene cortado a 19 caracteres: un extremo final truncado no se usa."""
+    if not isinstance(v, int):
+        return str(v)
+    lab = f.get("value") or ""
+    rng = data_range(f)
+    if rng is None or not lab:
+        return str(v)
+    if "~" not in lab:  # (fixed)
+        return lab if v == rng[0] else str(v)
+    lo, hi = lab.split("~", 1)
+    if v == rng[0] and lo and not re.fullmatch(r"[-+]?\d+", lo):
+        return lo
+    if v == rng[1] and hi and len(lab) < 19 and not re.fullmatch(r"[-+]?\d+", hi):
+        return hi
+    return str(v)
+
+
+def decode_compact(obj: ObjType, data: bytes, query: str | list[str] | None = None, groups: list[str] | None = None,
+                   skip_defaults: bool = False, limit: int = 150) -> dict:
+    """Un parámetro por línea 'Nombre = valor'. query (texto o lista): union de coincidencias.
+    Sin query se omiten los grupos pesados (KARMA, Drum Track…) salvo los pedidos en groups."""
+    qs = [query.lower()] if isinstance(query, str) else [q.lower() for q in (query or [])]
+    gs = [g.lower() for g in (groups or [])]
+    lines, total = [], 0
+    for f, base, label in iter_fields(obj, data):
+        low = label.lower()
+        if qs and not any(q in low for q in qs):
+            continue
+        if gs and not any(g in low for g in gs):
+            continue
+        if not qs and not gs and any(low.startswith(h) or f" {h}" in low.split(" / ")[0] for h in HEAVY_GROUPS):
+            continue
+        v = read(data, f, base)
+        if skip_defaults and (v in (0, "", None) or v == "0" * len(str(v))):
+            continue
+        if not f.get("name"):
+            continue
+        total += 1
+        if len(lines) < limit:
+            lines.append(f"{label} = {value_text(f, v)}")
+    res: dict = {"params": lines}
+    if total > len(lines):
+        res["truncated"] = f"{len(lines)} de {total}: usa query/groups para acotar"
+    return res
+
+
 def summary(obj: ObjType, data: bytes) -> dict:
     """Resumen legible: nombre, motores/efectos activos."""
     res: dict = {"map": map_name(obj, len(data))}
@@ -190,24 +242,78 @@ def summary(obj: ObjType, data: bytes) -> dict:
 
 
 # --- búsqueda y Parameter ID ------------------------------------------------------------
-def find(text: str, maps: list[str] | None = None, limit: int = 40) -> list[dict]:
-    t = text.lower()
-    maps = maps or ["program_hd1", "program_exi", "combination", "global", "set_list", "song_control", "drum_kit", "wave_seq"]
-    out = []
+SYNONYMS = {
+    "mono": ["Assign Mode", "Legato"],
+    "voice assign": ["Assign Mode", "Legato"],
+    "voice mode": ["Assign Mode", "Legato"],
+    "poly": ["Assign Mode", "Poly Legato"],
+    "glide": ["Portamento"],
+    "portamento": ["Portamento"],
+    "cutoff": ["Cutoff", "Frequency"],
+    "freq": ["Cutoff", "Frequency"],
+    "vibrato": ["LFO"],
+    "tremolo": ["LFO"],
+    "resonance": ["Resonance"],
+    "reso": ["Resonance"],
+    "attack": ["Attack Time"],
+    "release": ["Release Time"],
+    "decay": ["Decay Time"],
+    "volume": ["Level", "Volume"],
+    "pan": ["Panpot", "Pan"],
+    "reverb": ["Master Effect", "Return"],
+    "delay": ["Delay", "Master Effect"],
+}
+_MAPS = ["program_hd1", "program_exi", "combination", "global", "set_list", "song_control", "drum_kit", "wave_seq"]
+
+
+def _candidates(maps: list[str]):
+    """(texto de búsqueda en minúsculas, resultado) de todos los parámetros con nombre."""
     for name in maps:
         for f in load(name)["fields"]:
             label = _label(f)
-            if t in label.lower():
-                out.append({"map": name, "param": label, "ofs": f["ofs"], "id": _pid(f), "data": f.get("data"), "range": f.get("value")})
-                if len(out) >= limit:
-                    return out
+            yield label.lower(), {"map": name, "param": label, "ofs": f["ofs"], "id": _pid(f), "data": f.get("data"), "range": f.get("value")}
     for e_id, e in load("effects").items():
         for f in e["fields"]:
-            if t in f.get("name", "").lower():
-                out.append({"map": "effects", "effect": f"{e_id}:{e['name']}", "param": f.get("name", ""), "rel_ofs": f["ofs"], "pid": f.get("id", {}).get("PID"), "range": f.get("value")})
-                if len(out) >= limit:
-                    return out
-    return out
+            yield f.get("name", "").lower(), {"map": "effects", "effect": f"{e_id}:{e['name']}", "param": f.get("name", ""), "rel_ofs": f["ofs"], "pid": f.get("id", {}).get("PID"), "range": f.get("value")}
+    for e_id, e in load("exi_engines").items():  # los parámetros de los motores EXi no están en los mapas de Program
+        for f in e["fields"]:
+            yield f.get("name", "").lower(), {"map": "exi_engines", "engine": e["name"], "param": f.get("name", ""), "rel_ofs": f["ofs"], "range": f.get("value")}
+
+
+def _search(terms: list[str], maps: list[str], limit: int, all_words: bool = False) -> list[dict]:
+    out, seen = [], set()
+    words = [w for t in terms for w in (t.split() if all_words else [t])]
+    for low, item in _candidates(maps):
+        if (all(w in low for w in words) if all_words else any(t in low for t in terms)):
+            key = (item["map"], item.get("engine"), item["param"], item.get("ofs", item.get("rel_ofs")))
+            if key not in seen:
+                seen.add(key)
+                out.append(item)
+    # los grupos pesados (KARMA, Drum Track…) al final
+    out.sort(key=lambda i: i["param"].lower().startswith(HEAVY_GROUPS))
+    return out[:limit]
+
+
+def find(text: str, maps: list[str] | None = None, limit: int = 40) -> list[dict]:
+    """Busca por nombre: subcadena → todas las palabras (en cualquier orden) → sinónimos
+    ('mono' → Legato, 'glide' → Portamento…). Sin resultados devuelve los 5 nombres más parecidos."""
+    t = text.lower().strip()
+    maps = maps or _MAPS
+    res = _search([t], maps, limit) or _search([t], maps, limit, all_words=True)
+    if res:
+        return res
+    alts = SYNONYMS.get(t) or [alt for k, v in SYNONYMS.items() if k in t for alt in v]
+    if alts:
+        res = _search([a.lower() for a in alts], maps, limit)
+        if res:
+            return res
+    import difflib
+
+    names = {}
+    for low, item in _candidates(maps):
+        names.setdefault(low.split(" / ")[-1], item["param"])
+    close = difflib.get_close_matches(t, list(names), n=5, cutoff=0.4)
+    return [{"no_match": text, "did_you_mean": [names[c] for c in close]}]
 
 
 @lru_cache(maxsize=1)

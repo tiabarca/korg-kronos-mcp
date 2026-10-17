@@ -34,7 +34,7 @@ def test_copy_effect_between_slots_and_sizes():
     s0, s1 = D.effect_extent("program_hd1", "Insert Effect2")
     src[s0:s1] = bytes(range(s1 - s0))
     src[162] = 47  # Polysix Ensemble
-    new, log = D.apply(ObjType.PROGRAM, _exi_al1(), [{"copy_effect": "Insert Effect2", "from": bytes(src), "to": "Insert Effect1"}])
+    new, log = D.apply(ObjType.PROGRAM, _exi_al1(), [{"copy_effect": "Insert Effect2", "from": bytes(src), "to": "Insert Effect1", "keep_routing": False}])
     d0, d1 = D.effect_extent("program_exi", "Insert Effect1")
     assert new[d0:d1] == bytes(src[s0:s1]) and log[0]["effect"] == "Polysix Ensemble"
     assert new[88] == 47

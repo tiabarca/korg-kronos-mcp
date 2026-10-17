@@ -82,6 +82,12 @@ def add_object(cat: dict, t: int, b: int, i: int, data: bytes, global_channel: i
         cat["combis"][f"{COMBI_BANK_LABEL[b]} {i:03d}"] = {"name": _name(data), "timbres": combi_timbres(data, global_channel)}
 
 
+def update_entry(cat: dict, obj: int, bank: int, index: int, data: bytes, global_channel: int = 1) -> None:
+    """Pone al día un solo slot del catálogo (tras guardar un Program/Combi) y reindexa Program → Combis."""
+    add_object(cat, int(obj), bank, index, data, global_channel)
+    resolve(cat)
+
+
 def build_from_backup(folder: Path, global_channel: int = 1) -> dict:
     import hashlib
 
