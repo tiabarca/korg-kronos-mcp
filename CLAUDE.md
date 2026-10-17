@@ -11,7 +11,7 @@ MCP server (Python, `src/kronos_mcp`) para mantener un Korg Kronos por MIDI SysE
 ## Reglas de trabajo con el teclado
 - Leer es libre: `probe` (peticiones seguras), `snapshot`, `read_object`, `list_bank`, `monitor`.
 - Escribir exige `KRONOS_ALLOW_WRITE=1` y `confirm=true`. Antes: backup (`backup_bank`) y confirmación explícita del usuario.
-- Para entender un sonido: `decode_object` (nombres oficiales). Para auditar el teclado: `system_status` + `bank_status`.
+- Para entender un sonido: `voice_summary` (una llamada); detalle con `decode_object` y `query` como lista. Oírlo: `play_notes`. Para auditar el teclado: `system_status` + `bank_status`.
 - Cada hallazgo se registra en el momento: `learn_param` (parámetros) y `note` (protocolo). Al cerrar sesión, `export_knowledge`.
 - Un cambio por experimento. Si el diff tiene muchos tramos, repetir aislando mejor.
 

@@ -1,25 +1,12 @@
-# Ingeniería inversa — hallazgos (2026-10-11)
+# Hallazgos del KRONOS Editor 3.1 (2026-10-11)
 
-Material analizado (en `docs\extra`):
-- `KRONOS_Update_3_1_3` — actualización del sistema operativo 3.1.3.
-- `Kronos31Setup.exe` — instalador del KRONOS Editor / Plug-In Editor 3.1 (Inno Setup 5.5).
-
-Objetivo: interoperabilidad con un Kronos propio. **No se ha intentado descifrar el firmware** (ver §1).
+Fuente: el instalador del KRONOS Editor 3.1 (Inno Setup, extraído con `innoextract`). El protocolo se obtuvo del editor
+oficial; no se analizó el firmware del teclado (queda fuera del alcance: el SO 3.1.3 es Linux con las imágenes de la
+aplicación cifradas).
 
 ---
 
-## 1. Actualización del SO 3.1.3
-
-| Elemento | Hallazgo |
-|---|---|
-| Plataforma | Linux 2.6.32.11-korg con RTAI (tiempo real), x86 de 32 bits |
-| `install.info` | VERSION=3.1.3, tar.gz con scripts `pretar.sh` / `posttar.sh` y verificación md5 de cada fichero (`*.csum`) |
-| Aplicación principal | `mnt/korg/ro/Eva.img` (129 MB) y `Mod.img` (17 MB), **cifrados** (entropía ≈ 7,9998 bits/byte). Los carga `sbin/loadmod.ko` / `loadoa` al arrancar; si la autenticación falla se muestra `ShowReauthScreen`. |
-| Módulos en claro | `USBMidiAccessory.ko` (MIDI USB), `OmapNKS4Module.ko` (panel frontal/barra de progreso), `STGGmp.ko`, drivers USB-Ethernet (`smsc7500.ko`, etc.) |
-
-**Decisión:** el motor de sonido y la implementación SysEx están dentro de las imágenes cifradas. Saltarse ese cifrado queda fuera del alcance del proyecto. El protocolo se ha obtenido del editor oficial (§2), que es más útil para este fin.
-
-### Servidor FTP integrado (útil para mantenimiento)
+## 1. Mantenimiento por FTP (SO 3.1.3)
 
 `etc/OA.rc` arranca `vsftpd` cuando hay un adaptador USB-Ethernet. La función es oficial: existe desde el SO 2.0.2 y está pensada para transferir ficheros.
 
@@ -40,7 +27,7 @@ local_enable=YES          banner "Welcome to the Korg Kronos FTP service."
 
 ## 2. KRONOS Editor 3.1 (Sound Quest UniQuest / MidiQuest)
 
-Extraído con `innoextract`. El editor es un "driver" de MidiQuest:
+El editor es un "driver" de MidiQuest:
 - `app/Instruments/Korg OASYS/*.sqt`: plantillas de pantalla en un formato propio comprimido. No se han decodificado.
 - `*.ini`: 599 listas de valores (enumeraciones de parámetros) → exportadas a `data/editor_stringlists.json`.
 - `Win32/OASYS*.dll`: controles gráficos personalizados. Contienen los textos de los códigos de error Reply.

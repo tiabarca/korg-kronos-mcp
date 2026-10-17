@@ -47,6 +47,11 @@ INSTRUCTIONS = """Servidor para mantener un Korg Kronos por MIDI SysEx y descubr
 Mapas oficiales de Korg cargados (data/params): decode_object, find_parameter y set_parameter
 usan los nombres reales de cada parámetro; los diffs indican qué parámetro ha cambiado.
 
+Ahorra contexto (cada respuesta se relee en cada turno):
+- Para entender un sonido: voice_summary (1 llamada). Para detalles: decode_object con query=[...] (lista) en vez de varias llamadas.
+- Para oírlo: play_notes. Para diseñar: design_program / design_combi (respuesta ligera; verbose=true solo si hace falta).
+- find_parameter admite sinónimos (mono, glide, vibrato…) y sugiere nombres parecidos.
+
 Reglas:
 - Antes de escribir en el teclado (tools con confirm), haz backup (backup_bank / read_object save_backup) y pide confirmación al usuario.
 - Las peticiones de solo lectura se pueden explorar con `probe` sin permisos de escritura.
